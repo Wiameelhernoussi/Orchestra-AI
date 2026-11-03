@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orchestra-ai-backend"
+version = "0.1.0"
+description = "Orchestra AI – From intent to agreement. From evidence to approval. From approval to payment."
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi[standard]",
+    "uvicorn[standard]",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+    "alembic",
+    "pydantic>=2.0",
+    "pydantic-settings",
+    "python-dotenv",
+    "httpx",
+    "python-multipart",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["tests*", "alembic*"]
