@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     PAYPAL_CLIENT_ID: str = ""
     PAYPAL_CLIENT_SECRET: str = ""
     PAYPAL_WEBHOOK_ID: str = ""
-    PAYPAL_MODE: str = "sandbox"  # "sandbox" or "mock"
+    PAYPAL_MODE: str = "sandbox"
     PAYPAL_BASE_URL: str = "https://api-m.sandbox.paypal.com"
     MEDIA_DIR: str = "media"
 

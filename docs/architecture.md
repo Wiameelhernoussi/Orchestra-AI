@@ -23,7 +23,7 @@
 
 ## Data Model
 
-- **users** — seeded demo users (client, provider) with org membership
+- **users** — demo client/provider identities with organization membership
 - **organizations** — client company & provider agency
 - **agreements** — structured work agreements with FSM status
 - **milestones** — sequential deliverable phases with amounts (cents)
@@ -71,10 +71,27 @@ the same check.
 - Advisory only — client makes final decision
 
 ## PayPal Integration
-- Sandbox invoicing only (not escrow)
-- Invoice creation decoupled from approval (retryable, idempotent)
-- Webhook verification via PayPal signature check
-- Fallback: sync-payment endpoint polls PayPal API
+- Sandbox-only OAuth 2.0 client; production PayPal API hosts are rejected.
+- `POST /api/v1/payments/milestones/{milestone_id}/invoice` requires a
+  database-verified client user, agreement membership, and a recorded human
+  approval. Invoice creation and sending are retryable and use persisted
+  `PayPal-Request-Id` values.
+- `POST /api/v1/webhooks/paypal` verifies the PayPal transmission signature with
+  PayPal before processing `INVOICING.INVOICE.PAID` or
+  `INVOICING.INVOICE.CANCELLED`. It extracts invoice IDs from supported
+  resource shapes, persists all verified events (including ignored/unlinked
+  events), and acknowledges those events with HTTP 200. Event IDs are persisted
+  for idempotent replay; logs record event IDs, event types, verification and
+  processing outcomes without logging headers or full payloads.
+- `POST /api/v1/payments/invoices/{invoice_id}/sync` reads the invoice directly
+  from PayPal for an agreement member; it does not trust a browser redirect.
+- Amounts remain integer cents in the database and use `Decimal` for API values.
+
+Configure the active tunnel as the Sandbox app's webhook URL:
+`https://mutable-levitate-alkaline.ngrok-free.dev/api/v1/webhooks/paypal`.
+Subscribe to the paid and cancelled invoice events and configure the generated
+webhook ID as `PAYPAL_WEBHOOK_ID` in `backend/.env`. Use a sandbox Business
+account as the invoicer and the sandbox Personal account as payer.
 
 ## Approved Phase Plan
 
@@ -101,6 +118,7 @@ the same check.
    sub-three-minute demo video/script, and write the Devpost submission. Confirm
    the official submission deadline before scheduling this phase.
 
-The Phase 2 payment demo uses the real PayPal Sandbox flow; `PAYPAL_MODE=mock`
-is reserved for automated tests. Approval is persisted independently of invoice
-creation, and all monetary values use integer cents.
+The Phase 2 payment demo uses PayPal Sandbox only. Automated tests replace the
+HTTP transport with deterministic responses and never issue invoices. Approval
+is persisted independently of invoice creation, and all monetary values use
+integer cents.

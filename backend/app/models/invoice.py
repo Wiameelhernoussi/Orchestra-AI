@@ -10,10 +10,10 @@ class Invoice(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     milestone_id = Column(String, ForeignKey("milestones.id"), nullable=False)
     paypal_invoice_id = Column(String, nullable=True, unique=True)
-    paypal_request_id = Column(String, nullable=False, unique=True)  # idempotency key
+    paypal_request_id = Column(String, nullable=False, unique=True)
     amount_cents = Column(Integer, nullable=False)
     currency = Column(String, nullable=False, default="USD")
-    status = Column(String, nullable=False, default="DRAFT")  # DRAFT, SENT, PAID, CANCELLED
+    status = Column(String, nullable=False, default="DRAFT")
     paypal_invoice_url = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

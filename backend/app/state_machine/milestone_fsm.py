@@ -23,11 +23,18 @@ MILESTONE_TRANSITIONS: dict[tuple[MilestoneStatus, MilestoneStatus], Optional[st
     (MilestoneStatus.REVISION_REQUESTED, MilestoneStatus.IN_PROGRESS): "provider",
     (MilestoneStatus.IN_REVIEW, MilestoneStatus.APPROVED): "client",
     (MilestoneStatus.APPROVED, MilestoneStatus.INVOICING): None,  # system
+    (MilestoneStatus.APPROVED, MilestoneStatus.PAYMENT_PENDING): None,  # system recovery after a lost send response
     (MilestoneStatus.INVOICING, MilestoneStatus.PAYMENT_PENDING): None,  # system
     (MilestoneStatus.PAYMENT_PENDING, MilestoneStatus.PAID): None,  # system (webhook)
     (MilestoneStatus.PAYMENT_PENDING, MilestoneStatus.INVOICE_CANCELLED): None,  # system
     (MilestoneStatus.PAYMENT_PENDING, MilestoneStatus.INVOICE_EXPIRED): None,  # system
     (MilestoneStatus.INVOICING, MilestoneStatus.APPROVED): None,  # system (invoice creation failed)
+    (MilestoneStatus.INVOICING, MilestoneStatus.INVOICE_CANCELLED): None,
+    (MilestoneStatus.INVOICING, MilestoneStatus.INVOICE_EXPIRED): None,
+    (MilestoneStatus.APPROVED, MilestoneStatus.INVOICE_CANCELLED): None,
+    (MilestoneStatus.APPROVED, MilestoneStatus.INVOICE_EXPIRED): None,
+    (MilestoneStatus.INVOICE_CANCELLED, MilestoneStatus.PAYMENT_PENDING): None,  # verified late payment
+    (MilestoneStatus.INVOICE_EXPIRED, MilestoneStatus.PAYMENT_PENDING): None,  # verified late payment
     (MilestoneStatus.INVOICE_CANCELLED, MilestoneStatus.INVOICING): None,  # system retry
     (MilestoneStatus.INVOICE_EXPIRED, MilestoneStatus.INVOICING): None,  # system retry
 }
