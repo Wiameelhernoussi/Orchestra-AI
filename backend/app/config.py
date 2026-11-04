@@ -4,8 +4,15 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./orchestra.db"
     GROQ_API_KEY: str = ""
-    GROQ_INTENT_MODEL: str = "meta-llama/llama-3.3-70b-versatile"
-    GROQ_EVIDENCE_MODEL: str = "meta-llama/llama-4-scout-17b-16e-instruct"
+    GROQ_INTENT_MODEL: str = "openai/gpt-oss-120b"
+    GROQ_EVIDENCE_MODEL: str = "qwen/qwen3.8-27b"
+    GROQ_EVIDENCE_FALLBACK_MODEL: str = "openai/gpt-oss-20b"
+    GROQ_COMPARE_MODEL: str = "openai/gpt-oss-20b"
+    GROQ_REASONING_EFFORT: str = "low"
+    GROQ_INTENT_MAX_COMPLETION_TOKENS: int = 1200
+    GROQ_EVIDENCE_MAX_COMPLETION_TOKENS: int = 800
+    GROQ_MAX_RETRIES: int = 2
+    GROQ_MAX_RETRY_WAIT_SECONDS: int = 60
     PAYPAL_CLIENT_ID: str = ""
     PAYPAL_CLIENT_SECRET: str = ""
     PAYPAL_WEBHOOK_ID: str = ""

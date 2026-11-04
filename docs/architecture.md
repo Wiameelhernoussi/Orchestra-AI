@@ -59,16 +59,26 @@ the same check.
 ## AI Agents
 
 ### Intent Agent
-- Model: `meta-llama/llama-3.3-70b-versatile` (text, via Groq)
+- Model: `openai/gpt-oss-120b` (text, via Groq)
 - Input: natural language business request
-- Output: structured JSON (Pydantic-validated)
+- Output: strict JSON Schema response
 - Never invents: missing info listed under `missing_information`
 
 ### Evidence Agent
-- Model: `meta-llama/llama-4-scout-17b-16e-instruct` (vision-capable, via Groq)
-- Input: acceptance criteria + evidence (text, links, screenshots)
+- Model: `qwen/qwen3.8-27b` (vision-capable, via Groq), with
+  `openai/gpt-oss-20b` as the API-error fallback
+- Input: acceptance criteria + text evidence
 - Output: per-criterion verdict + overall assessment
 - Advisory only — client makes final decision
+
+The configured GPT-OSS models use strict JSON Schema, `reasoning_effort=low`,
+and bounded `max_completion_tokens`. 429 responses are retried using
+`Retry-After` when the wait fits the configured limit; longer waits are reported
+without retrying early. Per-call token counts are logged without prompts or
+credentials. `scripts/agents_demo.py` compares Qwen and GPT-OSS 20B on evidence.
+The current agent interface does not send image bytes to Groq; image evidence
+not attached to the request is conservatively marked `not_verifiable`.
+The demo supports `--cache` so repeat runs can reuse model outputs.
 
 ## PayPal Integration
 - Sandbox-only OAuth 2.0 client; production PayPal API hosts are rejected.
@@ -81,8 +91,9 @@ the same check.
   `INVOICING.INVOICE.CANCELLED`. It extracts invoice IDs from supported
   resource shapes, persists all verified events (including ignored/unlinked
   events), and acknowledges those events with HTTP 200. Event IDs are persisted
-  for idempotent replay; logs record event IDs, event types, verification and
-  processing outcomes without logging headers or full payloads.
+  for idempotent replay; each delivery log includes event ID/type, signature
+  verification result, linked milestone, HTTP response code, and outcome,
+  without logging headers or full payloads.
 - `POST /api/v1/payments/invoices/{invoice_id}/sync` reads the invoice directly
   from PayPal for an agreement member; it does not trust a browser redirect.
 - Amounts remain integer cents in the database and use `Decimal` for API values.

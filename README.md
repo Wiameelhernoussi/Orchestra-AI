@@ -124,8 +124,45 @@ See [docs/architecture.md](docs/architecture.md) for the full system design.
 - **Frontend:** React + TypeScript + Vite
 - **Backend:** FastAPI + SQLAlchemy + Alembic
 - **Database:** PostgreSQL (SQLite for local dev)
-- **AI:** Groq LLM (Llama 3.3 for intent, Llama 4 Scout for vision)
+- **AI:** Groq (GPT-OSS 120B for intent; Qwen 3.8 27B for evidence with GPT-OSS 20B fallback)
 - **Payments:** PayPal Invoicing API + Webhooks (Sandbox)
+
+### Groq agent demo
+
+Set `GROQ_API_KEY` and the model settings in `backend/.env` (see
+`backend/.env.example`), then run from the repository root:
+
+```powershell
+python scripts/agents_demo.py --cache
+```
+
+The demo compares the configured intent/evidence models with
+`GROQ_COMPARE_MODEL` (GPT-OSS 20B by default). `--cache` stores outputs in an
+ignored local JSON file; use `--cache path\to\cache.json` for a custom path.
+Cached runs do not call Groq. Each live request uses strict JSON Schema, low
+reasoning effort, compact fixed demo prompts and a bounded output-token cap.
+429 retries honor `Retry-After` up to `GROQ_MAX_RETRY_WAIT_SECONDS`; longer
+waits fail explicitly so the script does not retry too early. Logs contain only
+per-call token counts. An uncached run makes two intent and two evidence
+requests (configured model plus comparison model); an additional evidence
+request is made only if the primary model fails and the fallback is needed.
+A repeated run with the same cache uses none.
+
+If you change model settings while the backend container is running, recreate
+it to refresh its environment:
+
+```powershell
+docker compose up -d --force-recreate backend
+```
+
+Qwen is the Evidence Agent's primary model and GPT-OSS 20B is used if Qwen
+returns an API error or rate limit. The current agent interface does not send
+image bytes to Groq; if image evidence is flagged, the corresponding assessment
+is conservatively marked `not_verifiable`. The supported JSON Schema,
+reasoning, and retry parameters were checked against Groq's official
+[Structured Outputs](https://console.groq.com/docs/structured-outputs),
+[Reasoning](https://console.groq.com/docs/reasoning), and
+[Rate Limits](https://console.groq.com/docs/rate-limits) documentation.
 
 ## License
 

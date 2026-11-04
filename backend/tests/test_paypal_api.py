@@ -1,3 +1,5 @@
+import logging
+
 from app.api.deps import get_paypal_client
 from app.models.invoice import Invoice
 from app.models.webhook import WebhookEvent
@@ -68,7 +70,10 @@ def test_invoice_creation_without_approval_is_rejected(api_client, db, demo_reco
     assert response.status_code == 409
 
 
-def test_invalid_webhook_signature_does_not_change_payment_state(api_client, db, demo_records):
+def test_invalid_webhook_signature_does_not_change_payment_state(
+    api_client, db, demo_records, caplog
+):
+    caplog.set_level(logging.INFO, logger="app.api.v1.webhooks")
     paypal = FakePaypal(verified=False)
     _install_paypal(api_client, paypal)
     invoice = Invoice(
@@ -104,9 +109,22 @@ def test_invalid_webhook_signature_does_not_change_payment_state(api_client, db,
     assert invoice.status == "SENT"
     assert demo_records["milestone"].status == "PAYMENT_PENDING"
     assert db.query(WebhookEvent).count() == 0
+    delivery_log = next(
+        line for line in caplog.text.splitlines()
+        if "paypal_webhook_delivery" in line
+    )
+    assert "event_id=event-invalid" in delivery_log
+    assert "event_type=INVOICING.INVOICE.PAID" in delivery_log
+    assert "signature_verified=false" in delivery_log
+    assert "linked_milestone=none" in delivery_log
+    assert "response_code=400" in delivery_log
+    assert "paypal-transmission-sig" not in delivery_log
 
 
-def test_valid_paid_webhook_is_verified_processed_and_idempotent(api_client, db, demo_records):
+def test_valid_paid_webhook_is_verified_processed_and_idempotent(
+    api_client, db, demo_records, caplog
+):
+    caplog.set_level(logging.INFO, logger="app.api.v1.webhooks")
     paypal = FakePaypal()
     _install_paypal(api_client, paypal)
     invoice = Invoice(
@@ -143,6 +161,18 @@ def test_valid_paid_webhook_is_verified_processed_and_idempotent(api_client, db,
     assert invoice.status == "PAID"
     assert demo_records["milestone"].status == "PAID"
     assert db.query(WebhookEvent).count() == 1
+    delivery_logs = [
+        line for line in caplog.text.splitlines()
+        if "paypal_webhook_delivery" in line
+    ]
+    assert any(
+        "event_id=event-paid" in line
+        and "signature_verified=true" in line
+        and "linked_milestone=milestone-1" in line
+        and "response_code=200" in line
+        for line in delivery_logs
+    )
+    assert any("outcome=duplicate" in line for line in delivery_logs)
 
 
 def test_paid_webhook_extracts_invoice_id_from_nested_invoice(api_client, db, demo_records):

@@ -71,6 +71,30 @@ def _log_field(value: Any) -> str:
     return re.sub(r"[^A-Za-z0-9._:-]", "_", value[:120]) or "none"
 
 
+def _log_webhook_delivery(
+    event_id: Any,
+    event_type: Any,
+    *,
+    signature_verified: bool | None,
+    linked_milestone_id: str | None,
+    response_code: int,
+    outcome: str,
+) -> None:
+    verification = (
+        "unknown" if signature_verified is None else str(signature_verified).lower()
+    )
+    logger.info(
+        "paypal_webhook_delivery event_id=%s event_type=%s signature_verified=%s "
+        "linked_milestone=%s response_code=%d outcome=%s",
+        _log_field(event_id),
+        _log_field(event_type),
+        verification,
+        _log_field(linked_milestone_id),
+        response_code,
+        _log_field(outcome),
+    )
+
+
 @router.post("/paypal")
 async def receive_paypal_webhook(
     request: Request,
@@ -80,20 +104,37 @@ async def receive_paypal_webhook(
     try:
         event = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        logger.warning("paypal_webhook_rejected reason=invalid_json")
+        _log_webhook_delivery(
+            None,
+            None,
+            signature_verified=False,
+            linked_milestone_id=None,
+            response_code=400,
+            outcome="invalid_json",
+        )
         raise HTTPException(status_code=400, detail="Invalid webhook JSON.") from exc
     if not isinstance(event, dict):
-        logger.warning("paypal_webhook_rejected reason=invalid_event_shape")
+        _log_webhook_delivery(
+            None,
+            None,
+            signature_verified=False,
+            linked_milestone_id=None,
+            response_code=400,
+            outcome="invalid_event_shape",
+        )
         raise HTTPException(status_code=400, detail="Webhook event must be a JSON object.")
 
     event_id = event.get("id")
     event_type = event.get("event_type")
     signature_headers = {name: request.headers.get(name) for name in SIGNATURE_HEADERS}
     if any(not value for value in signature_headers.values()):
-        logger.warning(
-            "paypal_webhook_rejected event_id=%s event_type=%s reason=missing_signature_headers",
-            _log_field(event_id),
-            _log_field(event_type),
+        _log_webhook_delivery(
+            event_id,
+            event_type,
+            signature_verified=False,
+            linked_milestone_id=None,
+            response_code=400,
+            outcome="missing_signature_headers",
         )
         raise HTTPException(status_code=400, detail="Required PayPal signature headers are missing.")
 
@@ -102,45 +143,76 @@ async def receive_paypal_webhook(
             {name: value for name, value in signature_headers.items() if value is not None},
             event,
         ):
-            logger.warning(
-                "paypal_webhook_rejected event_id=%s event_type=%s reason=invalid_signature",
-                _log_field(event_id),
-                _log_field(event_type),
+            _log_webhook_delivery(
+                event_id,
+                event_type,
+                signature_verified=False,
+                linked_milestone_id=None,
+                response_code=400,
+                outcome="invalid_signature",
             )
             raise HTTPException(status_code=400, detail="PayPal webhook signature is invalid.")
     except PaypalAPIError as exc:
-        logger.error(
-            "paypal_webhook_verification_unavailable event_id=%s event_type=%s",
-            _log_field(event_id),
-            _log_field(event_type),
+        _log_webhook_delivery(
+            event_id,
+            event_type,
+            signature_verified=None,
+            linked_milestone_id=None,
+            response_code=502,
+            outcome="verification_unavailable",
         )
         raise HTTPException(status_code=502, detail="PayPal webhook signature verification failed.") from exc
     except PaypalConfigurationError as exc:
+        _log_webhook_delivery(
+            event_id,
+            event_type,
+            signature_verified=None,
+            linked_milestone_id=None,
+            response_code=503,
+            outcome="verification_misconfigured",
+        )
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     resource = event.get("resource")
     if not isinstance(event_id, str) or not event_id or not isinstance(event_type, str):
-        logger.warning(
-            "paypal_webhook_rejected event_id=%s event_type=%s reason=missing_event_metadata signature_verified=true",
-            _log_field(event_id),
-            _log_field(event_type),
+        _log_webhook_delivery(
+            event_id,
+            event_type,
+            signature_verified=True,
+            linked_milestone_id=None,
+            response_code=400,
+            outcome="missing_event_metadata",
         )
         raise HTTPException(status_code=400, detail="PayPal event ID and type are required.")
     if not isinstance(resource, dict):
-        logger.warning(
-            "paypal_webhook_rejected event_id=%s event_type=%s reason=invalid_resource signature_verified=true",
-            _log_field(event_id),
-            _log_field(event_type),
+        _log_webhook_delivery(
+            event_id,
+            event_type,
+            signature_verified=True,
+            linked_milestone_id=None,
+            response_code=400,
+            outcome="invalid_resource",
         )
         raise HTTPException(status_code=400, detail="PayPal event resource is missing.")
 
     invoice_id = extract_paypal_invoice_id(event)
+    invoice = (
+        db.query(Invoice)
+        .filter(Invoice.paypal_invoice_id == invoice_id)
+        .first()
+        if invoice_id
+        else None
+    )
+    linked_milestone_id = invoice.milestone_id if invoice is not None else None
     existing = db.query(WebhookEvent).filter(WebhookEvent.paypal_event_id == event_id).first()
     if existing is not None:
-        logger.info(
-            "paypal_webhook_duplicate event_id=%s event_type=%s signature_verified=true",
-            _log_field(event_id),
-            _log_field(event_type),
+        _log_webhook_delivery(
+            event_id,
+            event_type,
+            signature_verified=True,
+            linked_milestone_id=linked_milestone_id,
+            response_code=200,
+            outcome="duplicate",
         )
         return {"status": "duplicate", "event_id": event_id}
 
@@ -156,25 +228,31 @@ async def receive_paypal_webhook(
         db.flush()
     except IntegrityError:
         db.rollback()
-        logger.info(
-            "paypal_webhook_duplicate event_id=%s event_type=%s signature_verified=true",
-            _log_field(event_id),
-            _log_field(event_type),
+        _log_webhook_delivery(
+            event_id,
+            event_type,
+            signature_verified=True,
+            linked_milestone_id=linked_milestone_id,
+            response_code=200,
+            outcome="duplicate",
         )
         return {"status": "duplicate", "event_id": event_id}
 
     target_status = PAYPAL_EVENT_STATUSES.get(event_type)
     if target_status and invoice_id:
-        invoice = (
-            db.query(Invoice)
-            .filter(Invoice.paypal_invoice_id == invoice_id)
-            .first()
-        )
         if invoice is not None:
             try:
                 apply_paypal_invoice_status(db, invoice, target_status)
             except (InvalidTransitionError, ValueError) as exc:
                 db.rollback()
+                _log_webhook_delivery(
+                    event_id,
+                    event_type,
+                    signature_verified=True,
+                    linked_milestone_id=linked_milestone_id,
+                    response_code=409,
+                    outcome="invalid_transition",
+                )
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
             webhook_record.processed = "processed"
         else:
@@ -188,18 +266,22 @@ async def receive_paypal_webhook(
         db.rollback()
         existing = db.query(WebhookEvent).filter(WebhookEvent.paypal_event_id == event_id).first()
         if existing is not None:
-            logger.info(
-                "paypal_webhook_duplicate event_id=%s event_type=%s signature_verified=true",
-                _log_field(event_id),
-                _log_field(event_type),
+            _log_webhook_delivery(
+                event_id,
+                event_type,
+                signature_verified=True,
+                linked_milestone_id=linked_milestone_id,
+                response_code=200,
+                outcome="duplicate",
             )
             return {"status": "duplicate", "event_id": event_id}
         raise
-    logger.info(
-        "paypal_webhook_accepted event_id=%s event_type=%s signature_verified=true invoice_id=%s processed=%s",
-        _log_field(event_id),
-        _log_field(event_type),
-        _log_field(invoice_id),
-        webhook_record.processed,
+    _log_webhook_delivery(
+        event_id,
+        event_type,
+        signature_verified=True,
+        linked_milestone_id=linked_milestone_id,
+        response_code=200,
+        outcome=webhook_record.processed,
     )
     return {"status": webhook_record.processed, "event_id": event_id}
