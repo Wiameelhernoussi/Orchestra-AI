@@ -11,7 +11,13 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, StrictInt
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_completion_provider, get_current_user, get_db, get_settings
+from app.api.deps import (
+    get_completion_provider,
+    get_current_user,
+    get_db,
+    get_evidence_fact_checker,
+    get_settings,
+)
 from app.config import Settings
 from app.models import (
     AcceptanceCriterion,
@@ -29,8 +35,10 @@ from app.services.groq_agents import (
     AgentResult,
     CompletionProvider,
     EvidenceAgent,
+    GroqRateLimitError,
     IntentAgent,
 )
+from app.services.evidence_facts import EvidenceFactChecker
 from app.state_machine.agreement_fsm import (
     AgreementStatus,
     validate_agreement_transition,
@@ -51,6 +59,15 @@ client_router = APIRouter(prefix="/client", tags=["client"])
 provider_router = APIRouter(prefix="/provider", tags=["provider"])
 
 
+class CriterionQualityInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    criterion: str
+    objectively_verifiable: bool
+    reason: str
+    rewritten_criterion: str = ""
+
+
 class MilestoneInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -58,6 +75,7 @@ class MilestoneInput(BaseModel):
     amount_cents: StrictInt = Field(gt=0)
     deliverables: list[str] = Field(min_length=1)
     acceptance_criteria: list[str] = Field(min_length=1)
+    criteria_quality: list[CriterionQualityInput] = Field(default_factory=list)
 
 
 class IntentPayload(BaseModel):
@@ -199,6 +217,7 @@ def _milestone_summary(db: Session, milestone: Milestone) -> dict[str, Any]:
                 "type": item.evidence_type,
                 "content": item.content,
                 "ai_report": json.loads(item.ai_report) if item.ai_report else None,
+                "link_checks": json.loads(item.link_checks) if item.link_checks else [],
                 "created_at": item.created_at.isoformat() if item.created_at else None,
             }
             for item in evidence
@@ -255,6 +274,12 @@ def parse_intent(
             max_completion_tokens=settings.GROQ_INTENT_MAX_COMPLETION_TOKENS,
             reasoning_effort=settings.GROQ_REASONING_EFFORT,
         ).parse(request.request)
+    except GroqRateLimitError as exc:
+        logger.warning("intent_parse_rate_limited")
+        raise HTTPException(
+            status_code=429,
+            detail="The AI service is busy. Please retry in a moment.",
+        ) from exc
     except (ValueError, RuntimeError) as exc:
         logger.warning("intent_parse_failed error_type=%s", type(exc).__name__)
         raise HTTPException(status_code=502, detail="Intent parsing failed.") from exc
@@ -594,6 +619,7 @@ def submit_evidence(
     user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
     provider: CompletionProvider = Depends(get_completion_provider),
+    fact_checker: EvidenceFactChecker = Depends(get_evidence_fact_checker),
 ) -> dict[str, Any]:
     agreement = _agreement_for_member(db, agreement_id, user, required_role="provider")
     milestone = _milestone_for_agreement(db, agreement, milestone_id)
@@ -608,6 +634,7 @@ def submit_evidence(
         ensure_ascii=True,
         separators=(",", ":"),
     )
+    link_checks = fact_checker.check_links(links)
     criteria = [criterion.description for criterion in milestone.criteria]
     try:
         assessment = EvidenceAgent(
@@ -616,7 +643,17 @@ def submit_evidence(
             fallback_model=settings.GROQ_EVIDENCE_FALLBACK_MODEL,
             max_completion_tokens=settings.GROQ_EVIDENCE_MAX_COMPLETION_TOKENS,
             reasoning_effort=settings.GROQ_REASONING_EFFORT,
-        ).assess(criteria, evidence_content)
+        ).assess(
+            criteria,
+            evidence_content,
+            trusted_facts=link_checks,
+        )
+    except GroqRateLimitError as exc:
+        logger.warning("evidence_assessment_rate_limited")
+        raise HTTPException(
+            status_code=429,
+            detail="The AI service is busy. Please retry in a moment.",
+        ) from exc
     except RuntimeError as exc:
         logger.warning("evidence_assessment_failed error_type=%s", type(exc).__name__)
         raise HTTPException(status_code=502, detail="Evidence assessment failed.") from exc
@@ -628,6 +665,11 @@ def submit_evidence(
         evidence_type="submission",
         content=evidence_content,
         ai_report=json.dumps(assessment.data, ensure_ascii=False, separators=(",", ":")),
+        link_checks=json.dumps(
+            link_checks,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
     )
     db.add(evidence)
     _record_audit(
@@ -649,6 +691,7 @@ def submit_evidence(
         "evidence_id": evidence.id,
         "milestone_id": milestone.id,
         "ai_report": assessment.data,
+        "link_checks": link_checks,
         "milestone_status": milestone.status,
     }
 
@@ -715,27 +758,72 @@ def seed_demo(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     seed_token: str | None = Header(default=None, alias="X-Demo-Seed-Token"),
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
 ) -> dict[str, Any]:
-    if not settings.DEMO_SEED_TOKEN:
-        raise HTTPException(status_code=503, detail="Demo seed token is not configured.")
-    if not seed_token or not hmac.compare_digest(seed_token, settings.DEMO_SEED_TOKEN):
+    token_authorized = bool(
+        settings.DEMO_SEED_TOKEN
+        and seed_token
+        and hmac.compare_digest(seed_token, settings.DEMO_SEED_TOKEN)
+    )
+    demo_client = db.get(User, x_user_id) if x_user_id else None
+    demo_client_authorized = bool(
+        demo_client
+        and demo_client.id == "demo-client"
+        and demo_client.role == "client"
+        and demo_client.organization_id == "demo-client-org"
+    )
+    mock_mode = settings.DEMO_MODE == "mock"
+    if not token_authorized and not demo_client_authorized and not (
+        mock_mode and not settings.DEMO_SEED_TOKEN
+    ):
+        if not settings.DEMO_SEED_TOKEN:
+            raise HTTPException(status_code=503, detail="Demo seed token is not configured.")
         raise HTTPException(status_code=401, detail="Valid demo seed token is required.")
-    if not settings.DEMO_CLIENT_PAYPAL_EMAIL.strip():
+    if not settings.DEMO_CLIENT_PAYPAL_EMAIL.strip() and not mock_mode:
         raise HTTPException(status_code=503, detail="Demo client PayPal email is not configured.")
 
-    for model in (
-        WebhookEvent,
-        AuditLog,
-        Invoice,
-        Approval,
-        Evidence,
-        AcceptanceCriterion,
-        Milestone,
-        Agreement,
-        User,
-        Organization,
-    ):
-        db.query(model).delete(synchronize_session=False)
+    demo_agreement_ids = db.query(Agreement.id).filter(
+        (Agreement.client_org_id == "demo-client-org")
+        | (Agreement.provider_org_id == "demo-provider-org")
+    )
+    demo_milestone_ids = db.query(Milestone.id).filter(
+        Milestone.agreement_id.in_(demo_agreement_ids)
+    )
+    db.query(WebhookEvent).filter(
+        WebhookEvent.resource_id.in_(
+            db.query(Invoice.paypal_invoice_id).filter(
+                Invoice.milestone_id.in_(demo_milestone_ids)
+            )
+        )
+    ).delete(synchronize_session=False)
+    db.query(AuditLog).filter(AuditLog.agreement_id.in_(demo_agreement_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(Invoice).filter(Invoice.milestone_id.in_(demo_milestone_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(Approval).filter(Approval.milestone_id.in_(demo_milestone_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(Evidence).filter(Evidence.milestone_id.in_(demo_milestone_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(AcceptanceCriterion).filter(
+        AcceptanceCriterion.milestone_id.in_(demo_milestone_ids)
+    ).delete(synchronize_session=False)
+    db.query(Milestone).filter(Milestone.agreement_id.in_(demo_agreement_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(Agreement).filter(
+        (Agreement.client_org_id == "demo-client-org")
+        | (Agreement.provider_org_id == "demo-provider-org")
+    ).delete(synchronize_session=False)
+    db.query(User).filter(User.organization_id.in_(
+        ["demo-client-org", "demo-provider-org"]
+    )).delete(synchronize_session=False)
+    db.query(Organization).filter(
+        Organization.id.in_(["demo-client-org", "demo-provider-org"])
+    ).delete(synchronize_session=False)
     db.flush()
 
     client_org = Organization(id="demo-client-org", name="ShopFlow Inc")
@@ -745,7 +833,10 @@ def seed_demo(
     client_user = User(
         id="demo-client",
         name="Demo Client",
-        email=settings.DEMO_CLIENT_PAYPAL_EMAIL.strip(),
+        email=(
+            settings.DEMO_CLIENT_PAYPAL_EMAIL.strip()
+            or "mock-client@orchestra.local"
+        ),
         role="client",
         organization_id=client_org.id,
     )

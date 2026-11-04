@@ -1,3 +1,6 @@
+import logging
+import re
+
 from pydantic import BaseModel, ConfigDict
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -17,6 +20,13 @@ from app.services.paypal.invoicing import (
 from app.state_machine.exceptions import InvalidTransitionError
 
 router = APIRouter(prefix="/payments", tags=["payments"])
+logger = logging.getLogger(__name__)
+
+
+def _safe_paypal_log_value(value: str | None) -> str:
+    if not value:
+        return "none"
+    return re.sub(r"[^A-Za-z0-9._:-]", "_", value[:100])
 
 
 class InvoiceResponse(BaseModel):
@@ -82,6 +92,13 @@ def create_milestone_invoice(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except PaypalAPIError as exc:
         db.rollback()
+        logger.warning(
+            "paypal_invoice_operation_failed status_code=%s error_name=%s issues=%s",
+            exc.status_code if exc.status_code is not None else "none",
+            _safe_paypal_log_value(exc.error_name),
+            ",".join(_safe_paypal_log_value(issue) for issue in exc.issues[:5])
+            or "none",
+        )
         raise HTTPException(
             status_code=502,
             detail="PayPal Sandbox invoice operation failed. Approval is preserved; retry the invoice.",

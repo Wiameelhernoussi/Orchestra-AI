@@ -22,6 +22,9 @@ class FakePaypal:
             raise PaypalAPIError("temporary sandbox error", status_code=503)
         return {"id": "PAYPAL-INVOICE-1"}
 
+    def search_invoices(self, invoice_number):
+        return {"items": []}
+
     def send_invoice(self, invoice_id, request_id):
         self.send_calls.append((invoice_id, request_id))
         return {
@@ -40,9 +43,11 @@ class DuplicateInvoicePaypal(FakePaypal):
         self.invoice_number = ""
         self.search_calls = []
         self.get_calls = []
+        self.payload = None
 
     def create_invoice(self, payload, request_id):
         self.create_calls.append((payload, request_id))
+        self.payload = payload
         self.invoice_number = payload["detail"]["invoice_number"]
         raise PaypalAPIError(
             "Duplicate invoice number.",
@@ -53,6 +58,8 @@ class DuplicateInvoicePaypal(FakePaypal):
 
     def search_invoices(self, invoice_number):
         self.search_calls.append(invoice_number)
+        if len(self.search_calls) == 1:
+            return {"items": []}
         return {
             "items": [
                 {
@@ -67,7 +74,58 @@ class DuplicateInvoicePaypal(FakePaypal):
         return {
             "id": invoice_id,
             "status": "DRAFT",
-            "detail": {"invoice_number": self.invoice_number},
+            "detail": self.payload["detail"],
+            "primary_recipients": [
+                {"billing_info": {"email_address": "alice@example.test"}}
+            ],
+            "items": self.payload["items"],
+        }
+
+
+class ExistingDraftInvoicePaypal(FakePaypal):
+    def __init__(
+        self,
+        *,
+        recipient_email="alice@example.test",
+        amount="150.00",
+    ):
+        super().__init__()
+        self.recipient_email = recipient_email
+        self.amount = amount
+        self.invoice_number = ""
+
+    def search_invoices(self, invoice_number):
+        self.invoice_number = invoice_number
+        return {
+            "items": [
+                {
+                    "id": "PAYPAL-EXISTING-DRAFT",
+                    "detail": {"invoice_number": invoice_number},
+                }
+            ]
+        }
+
+    def get_invoice(self, invoice_id):
+        return {
+            "id": invoice_id,
+            "status": "DRAFT",
+            "detail": {
+                "invoice_number": self.invoice_number,
+                "currency_code": "USD",
+            },
+            "primary_recipients": [
+                {"billing_info": {"email_address": self.recipient_email}}
+            ],
+            "items": [
+                {
+                    "name": "Design",
+                    "quantity": "1",
+                    "unit_amount": {
+                        "currency_code": "USD",
+                        "value": self.amount,
+                    },
+                }
+            ],
         }
 
 
@@ -140,10 +198,63 @@ def test_duplicate_invoice_number_recovers_existing_sandbox_draft(db, demo_recor
     assert invoice.paypal_invoice_id == "PAYPAL-EXISTING-DRAFT"
     assert invoice.status == "SENT"
     assert demo_records["milestone"].status == "PAYMENT_PENDING"
-    assert paypal.search_calls == [paypal.invoice_number]
+    assert paypal.search_calls == [paypal.invoice_number, paypal.invoice_number]
     assert paypal.get_calls == ["PAYPAL-EXISTING-DRAFT"]
     assert len(paypal.create_calls) == 1
     assert len(paypal.send_calls) == 1
+
+
+def test_existing_sandbox_draft_is_reused_before_create(db, demo_records):
+    paypal = ExistingDraftInvoicePaypal()
+
+    invoice = create_or_retry_invoice(
+        db,
+        demo_records["milestone"],
+        "alice@example.test",
+        paypal,
+    )
+
+    assert invoice.paypal_invoice_id == "PAYPAL-EXISTING-DRAFT"
+    assert invoice.status == "SENT"
+    assert demo_records["milestone"].status == "PAYMENT_PENDING"
+    assert paypal.create_calls == []
+    assert len(paypal.send_calls) == 1
+
+
+def test_existing_invoice_for_another_recipient_is_not_reused(db, demo_records):
+    paypal = ExistingDraftInvoicePaypal(recipient_email="other@example.test")
+
+    with pytest.raises(PaypalAPIError, match="unexpected recipient"):
+        create_or_retry_invoice(
+            db,
+            demo_records["milestone"],
+            "alice@example.test",
+            paypal,
+        )
+
+    invoice = db.query(Invoice).one()
+    assert invoice.paypal_invoice_id is None
+    assert invoice.status == "DRAFT"
+    assert demo_records["milestone"].status == "APPROVED"
+    assert paypal.create_calls == []
+    assert paypal.send_calls == []
+
+
+def test_existing_invoice_with_another_amount_is_not_reused(db, demo_records):
+    paypal = ExistingDraftInvoicePaypal(amount="1.00")
+
+    with pytest.raises(PaypalAPIError, match="does not match the milestone amount"):
+        create_or_retry_invoice(
+            db,
+            demo_records["milestone"],
+            "alice@example.test",
+            paypal,
+        )
+
+    invoice = db.query(Invoice).one()
+    assert invoice.paypal_invoice_id is None
+    assert demo_records["milestone"].status == "APPROVED"
+    assert paypal.send_calls == []
 
 
 def test_verified_paypal_status_updates_invoice_and_milestone(db, demo_records):

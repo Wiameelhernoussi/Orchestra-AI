@@ -14,5 +14,6 @@ class Evidence(Base):
     content = Column(Text, nullable=True)  # text content or URL
     file_path = Column(String, nullable=True)  # local file path for uploads
     ai_report = Column(Text, nullable=True)  # JSON string of Evidence Agent output
+    link_checks = Column(Text, nullable=True)  # JSON string of deterministic link facts
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     milestone = relationship("Milestone", back_populates="evidence_items")

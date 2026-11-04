@@ -1,249 +1,173 @@
 # Orchestra AI
 
-> **From intent to agreement. From evidence to approval. From approval to payment.**
-> *Proof-to-Pay Intelligence*
+**From intent to agreement. From evidence to approval. From approval to payment.**
 
-Orchestra AI turns a natural-language business request into a structured work
-agreement with milestones, verifiable deliverables, and traceable PayPal
-payments.
+Orchestra AI turns a business request into a structured work agreement with
+milestones, measurable acceptance criteria, evidence review, and traceable
+PayPal payments. This prototype was built for the PayPal AI Hackathon 2026.
 
-Built for the **PayPal AI Hackathon 2026**.
+## The problem
 
-## Core Principles
+Freelance and agency projects often begin with vague requests and end with
+unclear deliverables, difficult approval conversations, and payment follow-up
+spread across email and payment portals.
 
-1. **AI never decides alone.** The client always approves deliverables. No payment
-   is triggered without explicit human approval.
-2. **Deterministic workflow engine.** Status transitions, role checks, and invoicing
-   triggers are plain code (state machine), not LLM decisions.
-3. **AI doesn't invent.** Missing information is flagged and asked for — never fabricated.
-4. **Honest framing.** This is NOT escrow. We use standard PayPal invoicing. The
-   agreement is a structured work agreement, not a legally binding contract.
-5. **Verified payments.** Payment status comes from PayPal webhooks, never from
-   the user returning to our site.
+## The solution
 
-## Quick Start
-
-### Prerequisites
-- Python 3.10+
-- Node.js 18+
-- Docker Desktop (recommended), or PostgreSQL for a local backend
-- Groq credentials are needed in the AI phase. PayPal Sandbox credentials are
-  needed only to create/pay a real Sandbox invoice; tests use mocked responses.
-
-### Setup
-
-```bash
-# Clone
-git clone https://github.com/YOUR_USERNAME/orchestra-ai.git
-cd orchestra-ai
-
-# Configure the backend (placeholders work for Phase 1)
-cp backend/.env.example backend/.env
-
-# Backend
-cd backend
-pip install -e ".[dev]"
-alembic upgrade head
-uvicorn app.main:app --reload
-
-# Frontend (new terminal)
-cd frontend
-npm install
-npm run dev
-```
-
-### With Docker
-```bash
-cp backend/.env.example backend/.env
-docker-compose up --build
-```
-
-The frontend is available at http://localhost:5173, the API at
-http://localhost:8000, and the API health check at
-http://localhost:8000/api/v1/health. Client/provider workflow endpoints and the
-real Groq + PayPal Sandbox demo runner are available in the backend. The UI
-workflow is not yet implemented.
-
-### Environment Variables
-Copy `backend/.env.example` to `backend/.env`. Add credentials only when
-you are ready to use the corresponding integration:
-- `GROQ_API_KEY` — from [console.groq.com](https://console.groq.com)
-- `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` — from [developer.paypal.com](https://developer.paypal.com)
-- `PAYPAL_WEBHOOK_ID` — webhook ID configured in your PayPal sandbox app
-- `DATABASE_URL` — PostgreSQL or SQLite connection string
-- `DEMO_CLIENT_PAYPAL_EMAIL` — Sandbox Personal account email that receives invoices
-- `DEMO_SEED_TOKEN` — private random token required to reset and seed demo data
-
-### PayPal Sandbox (Phase 2)
-
-The backend must be publicly reachable over HTTPS for PayPal webhooks. Register
-this URL in the Sandbox app under **Webhooks**:
-
-```text
-https://mutable-levitate-alkaline.ngrok-free.dev/api/v1/webhooks/paypal
-```
-
-Subscribe to `INVOICING.INVOICE.PAID` and
-`INVOICING.INVOICE.CANCELLED`, then put the webhook ID shown by PayPal in
-`backend/.env` as `PAYPAL_WEBHOOK_ID` and recreate the backend container:
-
-```powershell
-docker compose up -d --force-recreate backend
-```
-
-`POST /api/v1/payments/milestones/{milestone_id}/invoice` requires `X-User-Id`
-for a client user in the agreement and a recorded client approval. It creates
-and sends a real Sandbox invoice; do not call it until you intend to issue one.
-If creation or sending fails, approval remains recorded and the same request can
-be retried without duplicating the invoice.
-
-`POST /api/v1/payments/invoices/{invoice_id}/sync` reads the invoice from PayPal
-and is available to an agreement member. `POST /api/v1/webhooks/paypal` is
-public, but every event's signature is verified through PayPal before the
-database is updated. Replayed/forged test payloads do not confirm payment.
-`X-User-Id` is a database-checked demo identity header, not production
-authentication.
-Sandbox credentials, seeded users, and a client-approved milestone are required
-for an end-to-end invoice. `X-User-Id` is checked against the database, and every
-agreement route verifies organization membership. The demo seed endpoint deletes
-the current application records before creating the sample agreement, so use it
-only with demo data.
-
-### Phase 4 end-to-end demo
-
-Set `DEMO_CLIENT_PAYPAL_EMAIL` and `DEMO_SEED_TOKEN` in `backend/.env`, along
-with the Groq and PayPal Sandbox credentials. Generate a seed token locally
-without displaying it:
-
-```powershell
-$bytes = New-Object byte[] 32
-$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-$rng.GetBytes($bytes)
-$seedToken = [Convert]::ToBase64String($bytes)
-$envPath = '.\backend\.env'
-$tokenEntry = "DEMO_SEED_TOKEN=$seedToken"
-$envLines = Get-Content $envPath
-if ($envLines -match '^DEMO_SEED_TOKEN=') {
-  $envLines = $envLines | ForEach-Object {
-    if ($_ -match '^DEMO_SEED_TOKEN=') { $tokenEntry } else { $_ }
-  }
-} else {
-  $envLines += $tokenEntry
-}
-Set-Content -Path $envPath -Value $envLines
-$rng.Dispose()
-Remove-Variable seedToken, tokenEntry, envLines, bytes, rng
-```
-
-Start the services, then seed the demo explicitly (the script below can also
-seed automatically; do not seed separately if running it without `--no-seed`):
-
-```powershell
-docker compose up -d --build
-$seedToken = ((Get-Content .\backend\.env | Where-Object { $_ -match '^DEMO_SEED_TOKEN=' } | Select-Object -First 1) -replace '^DEMO_SEED_TOKEN=', '')
-$seed = Invoke-RestMethod -Method Post `
-  -Uri http://localhost:8000/api/v1/demo/seed `
-  -Headers @{ 'X-Demo-Seed-Token' = $seedToken }
-Remove-Variable seedToken
-$seed | Select-Object status, client_user_id, provider_user_id, agreement_id
-```
-
-Run the real Groq → review → approval → PayPal Sandbox invoice flow. `--no-seed`
-uses the users created above and avoids clearing database records:
-
-```powershell
-python .\scripts\e2e_real.py --no-seed
-```
-
-The runner stops after invoice creation and prints only the milestone ID,
-PayPal invoice ID, and payer-view link. Open that link and sign in with the
-Sandbox **Personal** account to review and pay the $150 Design invoice. Never
-use a real PayPal account for this Sandbox invoice.
-
-After payment, retrieve the local invoice ID for synchronization and check its
-status. Replace the placeholder with the milestone ID printed by the runner:
-
-```powershell
-$milestoneId = '<milestone id from e2e_real.py>'
-$agreements = Invoke-RestMethod -Uri http://localhost:8000/api/v1/client/agreements `
-  -Headers @{ 'X-User-Id' = 'demo-client' }
-$agreement = $agreements | Where-Object { $_.milestones.id -contains $milestoneId } | Select-Object -First 1
-$milestone = $agreement.milestones | Where-Object { $_.id -eq $milestoneId }
-$localInvoiceId = $milestone.invoices[0].id
-$sync = Invoke-RestMethod -Method Post `
-  -Uri "http://localhost:8000/api/v1/payments/invoices/$localInvoiceId/sync" `
-  -Headers @{ 'X-User-Id' = 'demo-client' }
-$sync | Select-Object status, milestone_id
-$agreements = Invoke-RestMethod -Uri http://localhost:8000/api/v1/client/agreements `
-  -Headers @{ 'X-User-Id' = 'demo-client' }
-$agreement = $agreements | Where-Object { $_.milestones.id -contains $milestoneId } | Select-Object -First 1
-$paidMilestone = $agreement.milestones | Where-Object { $_.id -eq $milestoneId }
-$paidMilestone | Select-Object id, status
-```
-
-Expect invoice `PAID` and milestone `PAID`. A verified PayPal webhook can update
-the same state automatically; `/sync` is the fallback when the webhook is not
-delivered. The following milestone cannot start until this one is paid.
-
-An OAuth `401` means PayPal rejected the configured client ID/secret. Ensure
-they are a matching pair from the Sandbox REST API app (not the Sandbox
-account's login password); do not share them in chat or commit them.
-
-Run the integration tests without using real credentials or creating invoices:
-
-```powershell
-cd backend
-python -m pytest -q
-```
+Orchestra AI structures the request into milestones and acceptance criteria,
+collects provider evidence, and gives the client an advisory evidence report.
+The client—not the AI—decides whether to approve. Only after that explicit
+approval can the system create a standard PayPal invoice. Verified PayPal
+webhooks update payment state; an invoice-sync endpoint is available as a
+fallback.
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md) for the full system design.
+- **Frontend:** React, TypeScript, Vite, and AG Grid Community dashboards.
+- **Backend:** FastAPI, Pydantic, SQLAlchemy, and Alembic.
+- **Database:** PostgreSQL in Docker Compose; SQLite is available for local
+  backend tests.
+- **AI:** Groq behind an injectable provider interface. The demo has a
+  deterministic mock provider; the real Intent Agent uses GPT-OSS 120B and the
+  Evidence Agent uses Qwen 3.8 27B with GPT-OSS 20B fallback.
+- **Payments:** Standard PayPal Invoicing API and verified webhooks in Sandbox.
+  Mock mode uses a fake payment client and never contacts PayPal.
+- **Workflow:** Plain-code state machines enforce roles, client approval, and
+  sequential milestones.
 
-## Stack
-- **Frontend:** React + TypeScript + Vite
-- **Backend:** FastAPI + SQLAlchemy + Alembic
-- **Database:** PostgreSQL (SQLite for local dev)
-- **AI:** Groq (GPT-OSS 120B for intent; Qwen 3.8 27B for evidence with GPT-OSS 20B fallback)
-- **Payments:** PayPal Invoicing API + Webhooks (Sandbox)
+## Quick setup: mock mode
 
-### Groq agent demo
-
-Set `GROQ_API_KEY` and the model settings in `backend/.env` (see
-`backend/.env.example`), then run from the repository root:
-
-```powershell
-python scripts/agents_demo.py --cache
-```
-
-The demo compares the configured intent/evidence models with
-`GROQ_COMPARE_MODEL` (GPT-OSS 20B by default). `--cache` stores outputs in an
-ignored local JSON file; use `--cache path\to\cache.json` for a custom path.
-Cached runs do not call Groq. Each live request uses strict JSON Schema, low
-reasoning effort, compact fixed demo prompts and a bounded output-token cap.
-429 retries honor `Retry-After` up to `GROQ_MAX_RETRY_WAIT_SECONDS`; longer
-waits fail explicitly so the script does not retry too early. Logs contain only
-per-call token counts. An uncached run makes two intent and two evidence
-requests (configured model plus comparison model); an additional evidence
-request is made only if the primary model fails and the fallback is needed.
-A repeated run with the same cache uses none.
-
-If you change model settings while the backend container is running, recreate
-it to refresh its environment:
+Requirements: Docker Desktop with Docker Compose. No Groq or PayPal credentials
+are needed. Once Docker's base images are cached, these steps take under five
+minutes; the first build may take longer while Docker downloads images and
+dependencies.
 
 ```powershell
-docker compose up -d --force-recreate backend
+git clone <repository-url>
+cd Orchestra-AI
+$env:DEMO_MODE = 'mock'
+docker compose up --build
 ```
 
-Qwen is the Evidence Agent's primary model and GPT-OSS 20B is used if Qwen
-returns an API error or rate limit. The current agent interface does not send
-image bytes to Groq; if image evidence is flagged, the corresponding assessment
-is conservatively marked `not_verifiable`. The supported JSON Schema,
-reasoning, and retry parameters were checked against Groq's official
-[Structured Outputs](https://console.groq.com/docs/structured-outputs),
-[Reasoning](https://console.groq.com/docs/reasoning), and
-[Rate Limits](https://console.groq.com/docs/rate-limits) documentation.
+Open [http://localhost:5173](http://localhost:5173). The first run creates the
+database and applies migrations. Choose **Reset demo** to seed the sample
+$600 e-commerce agreement. The top bar marks **Mock mode · simulated
+payments**. Mock payment status changes to `PAID` when you select the sync
+action; it does not represent a PayPal transaction.
+
+To stop the app, press `Ctrl+C` or run `docker compose down`. The database
+volume is retained unless explicitly removed.
+
+## Run with real Groq and PayPal Sandbox
+
+1. Copy `backend/.env.example` to `backend/.env`.
+2. Replace the placeholder values for `GROQ_API_KEY`,
+   `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`,
+   `DEMO_CLIENT_PAYPAL_EMAIL`, and `DEMO_SEED_TOKEN` with your own local
+   credentials and values. Use a PayPal **Sandbox** REST app and a Sandbox
+   Personal account. Never commit `backend/.env`.
+3. In PowerShell, select real mode and start the services:
+
+   ```powershell
+   $env:DEMO_MODE = 'real'
+   docker compose up --build
+   ```
+
+4. Seed the demo with the local seed token configured in `backend/.env`:
+
+   ```powershell
+   $seedToken = ((Get-Content .\backend\.env | Where-Object { $_ -match '^DEMO_SEED_TOKEN=' } | Select-Object -First 1) -replace '^DEMO_SEED_TOKEN=', '')
+   Invoke-RestMethod -Method Post `
+     -Uri http://localhost:8000/api/v1/demo/seed `
+     -Headers @{ 'X-Demo-Seed-Token' = $seedToken } | Select-Object status, agreement_id
+   Remove-Variable seedToken
+   ```
+
+The UI is at `http://localhost:5173`; API health is at
+`http://localhost:8000/api/v1/health`. To run Docker on alternate host ports,
+set `UI_PORT`, `API_PORT`, or `POSTGRES_PORT` before `docker compose up`.
+
+For webhooks, configure the PayPal Sandbox app's webhook URL to the publicly
+reachable HTTPS endpoint `https://<your-public-host>/api/v1/webhooks/paypal`
+and subscribe to the invoice events supported by this application. Use a
+temporary HTTPS tunnel only for development. Payment status is based on
+verified webhook events or the explicit PayPal invoice-sync fallback.
+
+## Three-minute demo walkthrough
+
+1. In **Client**, choose **New agreement**, review the prefilled e-commerce
+   request, analyze it, check missing information and proposed milestone
+   criteria, then propose the agreement.
+2. Switch to **Provider**, accept the proposal, start **Design**, submit a
+   description and any evidence links, then submit it for review.
+3. Switch to **Client**. Review the deterministic link facts and the Evidence
+   Agent's advisory report. Edit the revision-request draft if needed. Approve
+   the deliverable explicitly.
+4. In mock mode, use **Simulate mock payment** and observe the milestone update.
+   In real mode, create the Sandbox invoice, pay it using the Sandbox Personal
+   account, and return to the agreement. The page polls while payment is
+   pending; **Refresh status** syncs if the webhook has not arrived.
+5. Continue with the next milestone only after the prior milestone is paid.
+   Agreement, milestone, invoice, and audit tables support sorting and
+   filtering.
+
+## Environment variables
+
+The complete variable list and safe placeholders are in
+[`backend/.env.example`](backend/.env.example). The primary settings are:
+
+| Variable | Purpose |
+|---|---|
+| `DEMO_MODE` | `mock` for zero-key judge mode; `real` for Groq and PayPal Sandbox |
+| `DATABASE_URL` | Database connection; Docker Compose supplies PostgreSQL |
+| `GROQ_API_KEY` | Groq API key, required only in real mode |
+| `GROQ_INTENT_MODEL` | Intent model (default `openai/gpt-oss-120b`) |
+| `GROQ_EVIDENCE_MODEL` | Evidence model (default `qwen/qwen3.8-27b`) |
+| `GROQ_EVIDENCE_FALLBACK_MODEL` | Evidence fallback (default `openai/gpt-oss-20b`) |
+| `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | PayPal Sandbox REST app credentials |
+| `PAYPAL_WEBHOOK_ID` | Sandbox webhook identifier for signature verification |
+| `DEMO_CLIENT_PAYPAL_EMAIL` | Sandbox Personal payer email used for invoices |
+| `DEMO_SEED_TOKEN` | Locally generated token that protects initial demo seeding |
+| `PAYPAL_MODE` / `PAYPAL_BASE_URL` | Keep set to `sandbox` and PayPal's Sandbox API URL |
+
+Compose's `DEMO_MODE` is selected from the host environment. For local
+development in PowerShell, set `$env:DEMO_MODE = 'mock'` or
+`$env:DEMO_MODE = 'real'` in the same terminal before starting Compose.
+
+## Local checks
+
+```powershell
+Set-Location backend
+python -m pip install -e ".[dev]"
+python -m pytest -q
+
+Set-Location ..\frontend
+npm ci
+npm run build
+npm test
+```
+
+## Limitations
+
+- **Not escrow:** this application creates ordinary PayPal invoices and does
+  not hold funds.
+- **Not a legal contract:** agreements are structured project records, not
+  legally binding documents or e-signatures.
+- **Demo authentication only:** `X-User-Id` identifies seeded demo users; it
+  is not production authentication or authorization.
+- **AI is advisory:** model and link-check outputs do not establish that work
+  meets a criterion. The client must review evidence and approve explicitly.
+- **Mock payments are simulated:** mock mode has no PayPal connection and
+  should not be presented as a real payment.
+- **Sandbox only:** real integration is intended for PayPal Sandbox, not
+  production payments. This MVP has no disputes, escrow, or autonomous
+  financial actions.
+- **Link checks are limited observations:** HTTPS links are checked with
+  bounded requests and public-IP validation. HTTP status, page title, and
+  selected GitHub repository metadata do not prove authorship, correctness,
+  safety of page content, or acceptance-criteria compliance. GitHub root-file
+  checks are informational only.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [`LICENSE`](LICENSE).

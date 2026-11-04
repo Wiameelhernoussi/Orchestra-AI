@@ -14,6 +14,9 @@ class FakePaypal:
         self.created.append((payload, request_id))
         return {"id": "PAYPAL-INVOICE-API"}
 
+    def search_invoices(self, invoice_number):
+        return {"items": []}
+
     def send_invoice(self, invoice_id, request_id):
         return {
             "links": [

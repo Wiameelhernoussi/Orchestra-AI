@@ -241,6 +241,19 @@ def test_intent_retries_once_when_milestone_amounts_do_not_match_budget():
     assert sum(item["amount_cents"] for item in result.data["milestones"]) == 1000
 
 
+def test_vague_criterion_has_noninvented_quality_rewrite():
+    intent = _intent_result()
+    intent["milestones"][0]["acceptance_criteria"] = ["The design is high quality"]
+    provider = MockProvider([intent])
+
+    result = IntentAgent(provider, model="openai/gpt-oss-120b").parse("Build a site.")
+
+    quality = result.data["milestones"][0]["criteria_quality"][0]
+    assert quality["objectively_verifiable"] is False
+    assert "subjective" in quality["reason"]
+    assert "[observable result or measurable threshold]" in quality["rewritten_criterion"]
+
+
 def test_intent_retries_once_when_milestone_deliverables_or_criteria_are_empty():
     invalid = _intent_result()
     invalid["milestones"][0]["deliverables"] = []
@@ -323,6 +336,46 @@ def test_partial_evidence_is_deterministically_partial():
     )
 
     assert result.data["overall_verdict"] == "partial"
+
+
+def test_trusted_link_facts_are_separate_and_partial_evidence_gets_revision_draft():
+    provider = MockProvider(
+        [
+            {
+                "criteria_results": [
+                    {
+                        "criterion": "Design",
+                        "status": "verified",
+                        "explanation": "A relevant preview is attached.",
+                    },
+                    {
+                        "criterion": "Checkout",
+                        "status": "missing",
+                        "explanation": "No checkout evidence was supplied.",
+                    },
+                ],
+                "overall_verdict": "partial",
+                "report": "Additional proof is useful.",
+            }
+        ]
+    )
+    trusted_facts = [{"url": "https://example.test", "http_status": 200}]
+
+    result = EvidenceAgent(provider, model="qwen/qwen3.8-27b").assess(
+        ["Design", "Checkout"],
+        "A preview link is attached.",
+        trusted_facts=trusted_facts,
+    )
+
+    system_message, user_message = provider.calls[0]["messages"]
+    assert "Trusted link facts" in system_message["content"]
+    facts_json = system_message["content"].split("Trusted link facts: ", 1)[1]
+    assert json.loads(facts_json) == trusted_facts
+    assert "trusted_link_facts" not in json.loads(user_message["content"])
+    assert result.data["overall_verdict"] == "partial"
+    assert result.data["revision_request_draft"] == (
+        "Please provide additional evidence for: Checkout."
+    )
 
 
 def test_image_only_evidence_is_not_verifiable_without_model_attachment():

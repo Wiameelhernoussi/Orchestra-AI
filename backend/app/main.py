@@ -7,6 +7,7 @@ from app.api.v1.payments import router as payments_router
 from app.api.v1.webhooks import router as webhooks_router
 from app.api.v1.workflow import client_router, provider_router, router as workflow_router
 from app.database import engine
+from app.config import settings
 
 app = FastAPI(
     title="Orchestra AI",
@@ -36,4 +37,8 @@ def health_check():
             connection.execute(text("SELECT 1"))
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
-    return {"status": "healthy", "service": "orchestra-ai"}
+    return {
+        "status": "healthy",
+        "service": "orchestra-ai",
+        "demo_mode": settings.DEMO_MODE,
+    }

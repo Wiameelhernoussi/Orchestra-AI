@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: orchestra_dev
       POSTGRES_DB: orchestra_ai
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -18,11 +18,13 @@ services:
   backend:
     build: ./backend
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     environment:
       DATABASE_URL: postgresql+psycopg://orchestra:orchestra_dev@db:5432/orchestra_ai
+      DEMO_MODE: ${DEMO_MODE:-real}
     env_file:
-      - ./backend/.env
+      - path: ./backend/.env
+        required: false
     depends_on:
       db:
         condition: service_healthy
@@ -38,11 +40,14 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "5173:5173"
+      - "${UI_PORT:-5173}:5173"
+    environment:
+      VITE_API_PROXY_TARGET: http://backend:8000
     volumes:
       - ./frontend:/app
-      - /app/node_modules
+      - frontend_node_modules:/app/node_modules
     command: npm run dev -- --host 0.0.0.0
 
 volumes:
   pgdata:
+  frontend_node_modules:

@@ -142,49 +142,55 @@ def create_or_retry_invoice(
         recovered_remote_invoice: dict[str, Any] | None = None
         if not invoice.paypal_invoice_id:
             payload = build_invoice_payload(milestone, invoice.id, recipient_email)
-            try:
-                created = paypal.create_invoice(payload, invoice.paypal_request_id)
-            except PaypalAPIError as create_error:
-                if (
-                    create_error.status_code != 422
-                    or "DUPLICATE_INVOICE_NUMBER" not in create_error.issues
-                ):
-                    raise
-                search_result = paypal.search_invoices(
-                    payload["detail"]["invoice_number"]
-                )
-                matches = [
-                    item
-                    for item in search_result.get("items", [])
-                    if isinstance(item, dict)
-                    and isinstance(item.get("detail"), dict)
-                    and item["detail"].get("invoice_number")
-                    == payload["detail"]["invoice_number"]
-                    and isinstance(item.get("id"), str)
-                ]
-                if len(matches) != 1:
-                    raise create_error
-                paypal_invoice_id = matches[0]["id"]
-                recovered_remote_invoice = paypal.get_invoice(paypal_invoice_id)
-                remote_detail = recovered_remote_invoice.get("detail")
-                if (
-                    recovered_remote_invoice.get("id") != paypal_invoice_id
-                    or not isinstance(remote_detail, dict)
-                    or remote_detail.get("invoice_number")
-                    != payload["detail"]["invoice_number"]
-                ):
-                    raise create_error
+            recovered_remote_invoice = _find_reusable_remote_invoice(
+                paypal,
+                payload,
+                recipient_email,
+            )
+            if recovered_remote_invoice is not None:
+                paypal_invoice_id = recovered_remote_invoice["id"]
                 logger.info(
                     "paypal_invoice_recovered local_invoice_id=%s paypal_invoice_id=%s",
                     invoice.id,
                     paypal_invoice_id,
                 )
             else:
-                paypal_invoice_id = created.get("id")
+                try:
+                    created = paypal.create_invoice(
+                        payload, invoice.paypal_request_id
+                    )
+                except PaypalAPIError as create_error:
+                    if (
+                        create_error.status_code != 422
+                        or "DUPLICATE_INVOICE_NUMBER" not in create_error.issues
+                    ):
+                        raise
+                    recovered_remote_invoice = _find_reusable_remote_invoice(
+                        paypal,
+                        payload,
+                        recipient_email,
+                    )
+                    if recovered_remote_invoice is None:
+                        raise create_error
+                    paypal_invoice_id = recovered_remote_invoice["id"]
+                    logger.info(
+                        "paypal_invoice_recovered local_invoice_id=%s paypal_invoice_id=%s",
+                        invoice.id,
+                        paypal_invoice_id,
+                    )
+                else:
+                    paypal_invoice_id = created.get("id")
             if not isinstance(paypal_invoice_id, str) or not paypal_invoice_id:
                 raise PaypalAPIError("PayPal Sandbox did not return an invoice ID.")
             invoice.paypal_invoice_id = paypal_invoice_id
             db.commit()
+        if recovered_remote_invoice is not None:
+            _verify_reusable_remote_invoice(
+                recovered_remote_invoice,
+                invoice.paypal_invoice_id,
+                build_invoice_payload(milestone, invoice.id, recipient_email),
+                recipient_email,
+            )
 
         if recovered_remote_invoice is not None and recovered_remote_invoice.get(
             "status"
@@ -226,6 +232,106 @@ def create_or_retry_invoice(
             milestone.status = MilestoneStatus.APPROVED.value
             db.commit()
         raise
+
+
+def _find_reusable_remote_invoice(
+    paypal: PaypalClient,
+    payload: dict[str, Any],
+    recipient_email: str,
+) -> dict[str, Any] | None:
+    invoice_number = payload["detail"]["invoice_number"]
+    search_result = paypal.search_invoices(invoice_number)
+    if not isinstance(search_result, dict) or not isinstance(
+        search_result.get("items"), list
+    ):
+        raise PaypalAPIError("PayPal Sandbox returned an invalid invoice search result.")
+    matches = [
+        item
+        for item in search_result["items"]
+        if isinstance(item, dict)
+        and isinstance(item.get("id"), str)
+        and isinstance(item.get("detail"), dict)
+        and item["detail"].get("invoice_number") == invoice_number
+    ]
+    if len(matches) > 1:
+        raise PaypalAPIError(
+            "Multiple PayPal Sandbox invoices match this milestone; refusing to send."
+        )
+    if not matches:
+        return None
+
+    invoice_id = matches[0]["id"]
+    remote_invoice = paypal.get_invoice(invoice_id)
+    _verify_reusable_remote_invoice(
+        remote_invoice,
+        invoice_id,
+        payload,
+        recipient_email,
+    )
+    return remote_invoice
+
+
+def _verify_reusable_remote_invoice(
+    remote_invoice: dict[str, Any],
+    invoice_id: str,
+    payload: dict[str, Any],
+    recipient_email: str,
+) -> None:
+    detail = remote_invoice.get("detail")
+    recipients = remote_invoice.get("primary_recipients")
+    items = remote_invoice.get("items")
+    expected_detail = payload["detail"]
+    expected_item = payload["items"][0]
+    if (
+        remote_invoice.get("id") != invoice_id
+        or not isinstance(detail, dict)
+        or detail.get("invoice_number") != expected_detail["invoice_number"]
+        or detail.get("currency_code") != expected_detail["currency_code"]
+    ):
+        raise PaypalAPIError(
+            "Matching PayPal Sandbox invoice has unexpected invoice details."
+        )
+    if not isinstance(recipients, list) or not any(
+        isinstance(entry, dict)
+        and isinstance(entry.get("billing_info"), dict)
+        and isinstance(entry["billing_info"].get("email_address"), str)
+        and entry["billing_info"]["email_address"].casefold()
+        == recipient_email.strip().casefold()
+        for entry in recipients
+    ):
+        raise PaypalAPIError(
+            "Matching PayPal Sandbox invoice has an unexpected recipient."
+        )
+    if not isinstance(items, list) or len(items) != 1:
+        raise PaypalAPIError(
+            "Matching PayPal Sandbox invoice has unexpected line items."
+        )
+
+    item = items[0]
+    amount = item.get("unit_amount") if isinstance(item, dict) else None
+    try:
+        amount_matches = (
+            Decimal(amount["value"])
+            == Decimal(expected_item["unit_amount"]["value"])
+        )
+    except (KeyError, ArithmeticError, TypeError, ValueError):
+        amount_matches = False
+    if (
+        not isinstance(item, dict)
+        or item.get("name") != expected_item["name"]
+        or str(item.get("quantity")) != expected_item["quantity"]
+        or not isinstance(amount, dict)
+        or amount.get("currency_code")
+        != expected_item["unit_amount"]["currency_code"]
+        or not amount_matches
+    ):
+        raise PaypalAPIError(
+            "Matching PayPal Sandbox invoice does not match the milestone amount."
+        )
+    if remote_invoice.get("status") not in {"DRAFT", "SENT", "PAID"}:
+        raise PaypalAPIError(
+            "Matching PayPal Sandbox invoice is not in a reusable state."
+        )
 
 
 def _payer_view_url(resource: dict[str, Any], invoice_id: str) -> str:

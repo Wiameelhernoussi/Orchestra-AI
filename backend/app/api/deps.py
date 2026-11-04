@@ -6,8 +6,10 @@ from sqlalchemy.orm import Session
 from app.config import Settings, settings
 from app.database import get_db
 from app.models.user import User
-from app.services.groq_agents import GroqAgentClient
+from app.services.groq_agents import DemoMockProvider, GroqAgentClient
+from app.services.evidence_facts import EvidenceFactChecker
 from app.services.paypal.client import PaypalClient, PaypalConfigurationError
+from app.services.mock_integrations import MockPaypalClient
 
 
 def get_settings() -> Settings:
@@ -28,7 +30,10 @@ def get_current_user(
 
 def get_paypal_client(
     config: Settings = Depends(get_settings),
-) -> Generator[PaypalClient, None, None]:
+) -> Generator[PaypalClient | MockPaypalClient, None, None]:
+    if config.DEMO_MODE == "mock":
+        yield MockPaypalClient()
+        return
     try:
         client = PaypalClient(config)
     except PaypalConfigurationError as exc:
@@ -41,7 +46,10 @@ def get_paypal_client(
 
 def get_completion_provider(
     config: Settings = Depends(get_settings),
-) -> Generator[GroqAgentClient, None, None]:
+) -> Generator[GroqAgentClient | DemoMockProvider, None, None]:
+    if config.DEMO_MODE == "mock":
+        yield DemoMockProvider()
+        return
     if not config.GROQ_API_KEY:
         raise HTTPException(status_code=503, detail="Groq is not configured.")
     client = GroqAgentClient(
@@ -53,3 +61,11 @@ def get_completion_provider(
         yield client
     finally:
         client.close()
+
+
+def get_evidence_fact_checker():
+    checker = EvidenceFactChecker()
+    try:
+        yield checker
+    finally:
+        checker.close()
