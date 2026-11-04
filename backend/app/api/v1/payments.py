@@ -1,8 +1,6 @@
-import logging
-import re
-
 from pydantic import BaseModel, ConfigDict
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db, get_paypal_client
@@ -16,17 +14,12 @@ from app.services.paypal.client import PaypalAPIError, PaypalClient
 from app.services.paypal.invoicing import (
     apply_paypal_invoice_status,
     create_or_retry_invoice,
+    log_invoice_operation_failure,
+    redacted_invoice_error_message,
 )
 from app.state_machine.exceptions import InvalidTransitionError
 
 router = APIRouter(prefix="/payments", tags=["payments"])
-logger = logging.getLogger(__name__)
-
-
-def _safe_paypal_log_value(value: str | None) -> str:
-    if not value:
-        return "none"
-    return re.sub(r"[^A-Za-z0-9._:-]", "_", value[:100])
 
 
 class InvoiceResponse(BaseModel):
@@ -74,38 +67,56 @@ def create_milestone_invoice(
 
     try:
         invoice = create_or_retry_invoice(db, milestone, current_user.email, paypal)
-        db.add(
-            AuditLog(
-                agreement_id=agreement.id,
-                user_id=current_user.id,
-                action="invoice_created_or_retried",
-                entity_type="invoice",
-                entity_id=invoice.id,
-                details='{"provider":"paypal_sandbox"}',
+        try:
+            db.add(
+                AuditLog(
+                    agreement_id=agreement.id,
+                    user_id=current_user.id,
+                    action="invoice_created_or_retried",
+                    entity_type="invoice",
+                    entity_id=invoice.id,
+                    details='{"provider":"paypal_sandbox"}',
+                )
             )
-        )
-        db.commit()
-        db.refresh(invoice)
+            db.commit()
+            db.refresh(invoice)
+        except SQLAlchemyError as exc:
+            db.rollback()
+            log_invoice_operation_failure("save_audit_log_to_db", exc)
+            raise HTTPException(
+                status_code=502,
+                detail="Invoice was created but could not be fully recorded. Retrying is safe.",
+            ) from exc
         return invoice
     except InvalidTransitionError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except PaypalAPIError as exc:
         db.rollback()
-        logger.warning(
-            "paypal_invoice_operation_failed status_code=%s error_name=%s issues=%s",
-            exc.status_code if exc.status_code is not None else "none",
-            _safe_paypal_log_value(exc.error_name),
-            ",".join(_safe_paypal_log_value(issue) for issue in exc.issues[:5])
-            or "none",
-        )
+        step = getattr(exc, "invoice_step", "paypal_request")
+        reason = redacted_invoice_error_message(exc)
         raise HTTPException(
             status_code=502,
-            detail="PayPal Sandbox invoice operation failed. Approval is preserved; retry the invoice.",
+            detail=(
+                f"Invoice operation failed during {step}: {reason} "
+                "Approval is preserved; retrying is safe."
+            ),
+        ) from exc
+    except SQLAlchemyError as exc:
+        db.rollback()
+        step = getattr(exc, "invoice_step", "save_invoice_state_to_db")
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Invoice operation failed during {step}: the invoice could not "
+                "be saved. Approval is preserved; retrying is safe."
+            ),
         ) from exc
     except ValueError as exc:
         db.rollback()
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=422, detail=redacted_invoice_error_message(exc)
+        ) from exc
 
 
 @router.post("/invoices/{invoice_id}/sync", response_model=InvoiceResponse)

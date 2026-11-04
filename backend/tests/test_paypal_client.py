@@ -46,6 +46,7 @@ def test_invoice_request_uses_oauth_and_paypal_request_id():
     assert requests[0].headers["authorization"].startswith("Basic ")
     assert requests[1].headers["authorization"] == "Bearer sandbox-token"
     assert requests[1].headers["paypal-request-id"] == "stable-request-id"
+    assert requests[1].headers["prefer"] == "return=representation"
 
 
 def test_webhook_verification_posts_signature_fields_to_paypal():

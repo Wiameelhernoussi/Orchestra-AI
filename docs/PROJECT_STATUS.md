@@ -18,12 +18,12 @@ workflow, evidence review, explicit client approval, PayPal Sandbox invoices,
 webhook processing, and client/provider dashboards are present. Docker is
 currently running and the API health endpoint returns healthy.
 
-This is not yet a submission-ready, fully verified demo. The backend suite has
-one failing test; screenshot/image evidence is not sent to Qwen; and no full
-browser journey ending in a real Sandbox payment confirmed by the webhook (with
-no manual sync) was verified. The frontend builds and its small unit suite
-passes. GitHub reports the repository as public with an MIT license, but the
-YouTube video and Devpost submission are not present in the repository.
+At the time of this audit, the backend suite had one failing test;
+screenshot/image evidence was not sent to Qwen; and no full browser journey
+ending in a real Sandbox payment confirmed by the webhook (with no manual sync)
+was verified. The frontend builds and its small unit suite passes. GitHub
+reports the repository as public with an MIT license, but the YouTube video and
+Devpost submission are not present in the repository.
 
 ## 1. Git state
 
@@ -185,8 +185,44 @@ day, **L** = multi-step integration/testing effort.
 
 ## Audit boundaries
 
-The audit did not directly open or print `backend/.env`, change application
-code or configuration, issue PayPal transactions, contact Groq, or trigger a
-real webhook. The settings-loader access noted at the top was transient and
-produced no raw values. The only report of runtime integration state is the
-local health response and Compose service status.
+The initial read-only audit did not directly open or print `backend/.env`,
+change application code or configuration, issue PayPal transactions, contact
+Groq, or trigger a real webhook. The settings-loader access noted at the top
+was transient and produced no raw values. Its runtime integration observations
+were limited to the local health response and Compose service status.
+
+## Follow-up — invoice failure fix
+
+On November 4, the invoice failure was reproduced through the API on the
+specified milestone. The first failing step was `find_existing_invoice`: the
+successful PayPal search response had no body, which the client represented as
+an empty object and the workflow incorrectly rejected. Treating an empty
+successful search response as no matches allowed the flow to reach draft
+creation.
+
+PayPal's Invoicing API creates a draft with HTTP 201 but returns the invoice
+representation only when the request includes `Prefer: return=representation`.
+The client omitted that header, returned an empty object, and the workflow
+could not obtain the created invoice ID. The header is now sent on draft
+creation. The same persisted `PayPal-Request-Id` is reused for retries, and
+invoice sending keeps its deterministic request ID. The exact API retry
+completed successfully; a subsequent retry returned successfully and the
+database still had one `SENT` invoice row for the milestone. No payment was
+made.
+
+- **Reproduced failure:** step `create_draft`; exception `PaypalAPIError`;
+  redacted message `PayPal Sandbox did not return an invoice ID.`; no HTTP
+  error status, PayPal error name, or debug ID was available.
+- **Backend tests after fix:** 103 passed. One existing pytest deprecation
+  warning remains.
+- **Groq fallback diagnostics:** now include HTTP status, exception type, and
+  classified failure kind. Tests cover rate limit (429), model error (503),
+  and format error (HTTP 200 with invalid response content). Recent runtime
+  logs contained a legacy `GroqAPIError` fallback entry without an HTTP status;
+  that rules out the explicit 429 and response-format exception types, but does
+  not distinguish an HTTP/model error from a transport failure. No live Qwen
+  failure was induced during this follow-up.
+- **Changed implementation/tests:** `backend/app/services/paypal/client.py`,
+  `backend/app/services/paypal/invoicing.py`,
+  `backend/app/api/v1/payments.py`, `backend/app/services/groq_agents.py`,
+  and their corresponding backend tests.

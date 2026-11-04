@@ -127,6 +127,7 @@ class PaypalClient:
             "/v2/invoicing/invoices",
             json=payload,
             request_id=request_id,
+            extra_headers={"Prefer": "return=representation"},
         )
 
     def send_invoice(self, invoice_id: str, request_id: str) -> dict[str, Any]:
@@ -178,6 +179,7 @@ class PaypalClient:
         *,
         json: dict[str, Any] | None = None,
         request_id: str | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         token = self._get_access_token()
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
@@ -185,6 +187,8 @@ class PaypalClient:
             headers["PayPal-Request-Id"] = request_id
         if json is not None:
             headers["Content-Type"] = "application/json"
+        if extra_headers:
+            headers.update(extra_headers)
 
         try:
             response = self._http.request(method, path, headers=headers, json=json)

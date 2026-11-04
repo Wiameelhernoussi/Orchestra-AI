@@ -116,7 +116,9 @@ EVIDENCE_SCHEMA: dict[str, Any] = {
 
 
 class GroqAPIError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status_code: int | None = None):
+        self.status_code = status_code
+        super().__init__(message)
 
 
 class GroqRateLimitError(GroqAPIError):
@@ -129,7 +131,7 @@ class GroqRateLimitError(GroqAPIError):
                 "Groq rate limit exceeded; retry after "
                 f"{retry_after_seconds:g} seconds."
             )
-        super().__init__(message)
+        super().__init__(message, status_code=429)
 
 
 class GroqResponseError(GroqAPIError):
@@ -434,7 +436,8 @@ class GroqAgentClient:
                 continue
             if not response.is_success:
                 raise GroqAPIError(
-                    f"Groq returned HTTP {response.status_code}."
+                    f"Groq returned HTTP {response.status_code}.",
+                    status_code=response.status_code,
                 )
             break
         else:
@@ -451,9 +454,15 @@ class GroqAgentClient:
                 total_tokens=raw_usage["total_tokens"],
             )
         except (ValueError, KeyError, IndexError, TypeError) as exc:
-            raise GroqResponseError("Groq returned an unexpected response shape.") from exc
+            raise GroqResponseError(
+                "Groq returned an unexpected response shape.",
+                status_code=response.status_code,
+            ) from exc
         if not isinstance(content, str) or not content:
-            raise GroqResponseError("Groq returned an empty structured response.")
+            raise GroqResponseError(
+                "Groq returned an empty structured response.",
+                status_code=response.status_code,
+            )
         if any(
             not isinstance(count, int) or count < 0
             for count in (
@@ -462,13 +471,22 @@ class GroqAgentClient:
                 usage.total_tokens,
             )
         ):
-            raise GroqResponseError("Groq returned invalid token usage counts.")
+            raise GroqResponseError(
+                "Groq returned invalid token usage counts.",
+                status_code=response.status_code,
+            )
         try:
             data = json.loads(content)
         except json.JSONDecodeError as exc:
-            raise GroqResponseError("Groq returned invalid JSON.") from exc
+            raise GroqResponseError(
+                "Groq returned invalid JSON.",
+                status_code=response.status_code,
+            ) from exc
         if not isinstance(data, dict):
-            raise GroqResponseError("Groq returned JSON that is not an object.")
+            raise GroqResponseError(
+                "Groq returned JSON that is not an object.",
+                status_code=response.status_code,
+            )
 
         logger.info(
             "groq_token_usage model=%s prompt_tokens=%d completion_tokens=%d total_tokens=%d",
@@ -814,11 +832,24 @@ class EvidenceAgent:
         except GroqAPIError as primary_error:
             if not self._fallback_model or self._fallback_model == self._model:
                 raise
+            if isinstance(primary_error, GroqRateLimitError):
+                failure_kind = "rate_limit"
+            elif isinstance(primary_error, GroqResponseError):
+                failure_kind = "format_error"
+            elif primary_error.status_code is not None:
+                failure_kind = "model_error"
+            else:
+                failure_kind = "transport_error"
             logger.warning(
-                "groq_evidence_fallback primary_model=%s fallback_model=%s reason=%s",
+                "groq_evidence_fallback primary_model=%s fallback_model=%s "
+                "status_code=%s error_type=%s failure_kind=%s",
                 self._model,
                 self._fallback_model,
+                primary_error.status_code
+                if primary_error.status_code is not None
+                else "none",
                 type(primary_error).__name__,
+                failure_kind,
             )
             result = self._client.complete_json(
                 model=self._fallback_model,

@@ -437,6 +437,52 @@ def test_evidence_falls_back_to_gpt_oss_on_qwen_error(caplog):
     ]
     assert result.data["overall_verdict"] == "sufficient"
     assert "groq_evidence_fallback" in caplog.text
+    assert "status_code=429" in caplog.text
+    assert "error_type=GroqRateLimitError" in caplog.text
+    assert "failure_kind=rate_limit" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("failure_type", "status_code", "failure_kind"),
+    [
+        ("model", 503, "model_error"),
+        ("format", 200, "format_error"),
+    ],
+)
+def test_evidence_fallback_logs_groq_status_and_failure_kind(
+    caplog, failure_type, status_code, failure_kind
+):
+    if failure_type == "model":
+        primary_error = GroqAPIError(
+            "Groq returned HTTP 503.", status_code=status_code
+        )
+    else:
+        primary_error = GroqResponseError(
+            "Groq returned invalid JSON.", status_code=status_code
+        )
+    fallback = {
+        "criteria_results": [
+            {
+                "criterion": "A working website",
+                "status": "verified",
+                "explanation": "A test URL is included.",
+            }
+        ],
+        "overall_verdict": "sufficient",
+        "report": "The criterion is supported.",
+    }
+    provider = MockProvider([primary_error, fallback])
+
+    with caplog.at_level(logging.WARNING):
+        EvidenceAgent(
+            provider,
+            model="qwen/qwen3.8-27b",
+            fallback_model="openai/gpt-oss-20b",
+        ).assess(["A working website"], "A test URL.")
+
+    assert f"status_code={status_code}" in caplog.text
+    assert f"error_type={type(primary_error).__name__}" in caplog.text
+    assert f"failure_kind={failure_kind}" in caplog.text
 
 
 def test_evidence_does_not_swallow_failure_when_fallback_also_fails():

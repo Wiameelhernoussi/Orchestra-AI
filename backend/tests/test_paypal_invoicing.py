@@ -129,6 +129,11 @@ class ExistingDraftInvoicePaypal(FakePaypal):
         }
 
 
+class EmptyBodySearchPaypal(FakePaypal):
+    def search_invoices(self, invoice_number):
+        return {}
+
+
 def test_invoice_payload_uses_cents_and_the_approved_client_email(demo_records):
     payload = build_invoice_payload(
         demo_records["milestone"],
@@ -163,6 +168,23 @@ def test_paypal_failure_preserves_approval_and_retry_reuses_request_id(db, demo_
     assert milestone.status == "PAYMENT_PENDING"
     assert len(working_paypal.create_calls) == 1
     assert len(working_paypal.send_calls) == 1
+
+
+def test_empty_paypal_search_response_is_treated_as_no_existing_invoice(
+    db, demo_records
+):
+    paypal = EmptyBodySearchPaypal()
+
+    invoice = create_or_retry_invoice(
+        db, demo_records["milestone"], "alice@example.test", paypal
+    )
+
+    assert invoice.status == "SENT"
+    assert invoice.paypal_invoice_id == "PAYPAL-INVOICE-1"
+    assert demo_records["milestone"].status == "PAYMENT_PENDING"
+    assert len(paypal.create_calls) == 1
+    assert paypal.create_calls[0][1] == invoice.paypal_request_id
+    assert len(paypal.send_calls) == 1
 
 
 def test_repeated_invoice_request_does_not_create_a_duplicate(db, demo_records):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from decimal import Decimal
 from typing import Any
 from urllib.parse import quote
@@ -25,6 +26,49 @@ from app.state_machine.agreement_fsm import (
 )
 
 logger = logging.getLogger(__name__)
+
+_EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+_SENSITIVE_VALUE_RE = re.compile(
+    r"(?i)\b(authorization|access[_ -]?token|client[_ -]?secret|password)"
+    r"\s*[:=]\s*[^\s,;]+"
+)
+_AUTH_SCHEME_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/-]+=*")
+
+
+def _safe_error_field(value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        return "none"
+    return re.sub(r"[^A-Za-z0-9._:-]", "_", value[:100])
+
+
+def redacted_invoice_error_message(exc: Exception) -> str:
+    if isinstance(exc, (PaypalAPIError, ValueError, InvalidTransitionError)):
+        message = str(exc)
+    else:
+        message = "Unexpected integration or persistence error."
+    message = _EMAIL_RE.sub("[redacted email]", message)
+    message = _URL_RE.sub("[redacted URL]", message)
+    message = _SENSITIVE_VALUE_RE.sub(r"\1=[redacted]", message)
+    message = _AUTH_SCHEME_RE.sub(r"\1 [redacted]", message)
+    return re.sub(r"[\r\n\t]+", " ", message)[:200]
+
+
+def log_invoice_operation_failure(step: str, exc: Exception) -> None:
+    paypal_error = exc if isinstance(exc, PaypalAPIError) else None
+    logger.error(
+        "paypal_invoice_operation_failed step=%s exception_class=%s message=%s "
+        "status_code=%s error_name=%s issues=%s debug_id=%s",
+        _safe_error_field(step),
+        type(exc).__name__,
+        redacted_invoice_error_message(exc),
+        paypal_error.status_code if paypal_error and paypal_error.status_code is not None else "none",
+        _safe_error_field(paypal_error.error_name) if paypal_error else "none",
+        ",".join(_safe_error_field(issue) for issue in paypal_error.issues[:5])
+        if paypal_error and paypal_error.issues
+        else "none",
+        _safe_error_field(paypal_error.debug_id) if paypal_error else "none",
+    )
 
 
 def build_invoice_payload(
@@ -67,10 +111,30 @@ def create_or_retry_invoice(
     recipient_email: str,
     paypal: PaypalClient,
 ) -> Invoice:
+    operation = {"step": "validate_invoice_request"}
+    try:
+        return _create_or_retry_invoice(
+            db, milestone, recipient_email, paypal, operation
+        )
+    except Exception as exc:
+        log_invoice_operation_failure(operation["step"], exc)
+        setattr(exc, "invoice_step", operation["step"])
+        raise
+
+
+def _create_or_retry_invoice(
+    db: Session,
+    milestone: Milestone,
+    recipient_email: str,
+    paypal: PaypalClient,
+    operation: dict[str, str],
+) -> Invoice:
+    operation["step"] = "validate_invoice_request"
     if milestone.amount_cents <= 0:
         raise ValueError("Invoice amount must be greater than zero.")
     if not recipient_email.strip():
         raise ValueError("Invoice recipient email is required.")
+    operation["step"] = "load_invoice_state"
     db.refresh(milestone, with_for_update=True)
     current_status = MilestoneStatus(milestone.status)
     approval = (
@@ -118,6 +182,7 @@ def create_or_retry_invoice(
 
     reusable_draft = bool(invoice and invoice.status == "DRAFT")
     if not reusable_draft:
+        operation["step"] = "save_draft_to_db"
         invoice = Invoice(
             milestone_id=milestone.id,
             paypal_request_id=str(uuid4()),
@@ -135,13 +200,16 @@ def create_or_retry_invoice(
             user_role=None,
         )
         milestone.status = MilestoneStatus.INVOICING.value
+    operation["step"] = "save_draft_to_db"
     db.commit()
     db.refresh(invoice)
 
     try:
         recovered_remote_invoice: dict[str, Any] | None = None
         if not invoice.paypal_invoice_id:
+            operation["step"] = "build_payload"
             payload = build_invoice_payload(milestone, invoice.id, recipient_email)
+            operation["step"] = "find_existing_invoice"
             recovered_remote_invoice = _find_reusable_remote_invoice(
                 paypal,
                 payload,
@@ -156,6 +224,7 @@ def create_or_retry_invoice(
                 )
             else:
                 try:
+                    operation["step"] = "create_draft"
                     created = paypal.create_invoice(
                         payload, invoice.paypal_request_id
                     )
@@ -165,6 +234,7 @@ def create_or_retry_invoice(
                         or "DUPLICATE_INVOICE_NUMBER" not in create_error.issues
                     ):
                         raise
+                    operation["step"] = "find_existing_invoice"
                     recovered_remote_invoice = _find_reusable_remote_invoice(
                         paypal,
                         payload,
@@ -183,8 +253,10 @@ def create_or_retry_invoice(
             if not isinstance(paypal_invoice_id, str) or not paypal_invoice_id:
                 raise PaypalAPIError("PayPal Sandbox did not return an invoice ID.")
             invoice.paypal_invoice_id = paypal_invoice_id
+            operation["step"] = "save_paypal_invoice_id"
             db.commit()
         if recovered_remote_invoice is not None:
+            operation["step"] = "verify_existing_invoice"
             _verify_reusable_remote_invoice(
                 recovered_remote_invoice,
                 invoice.paypal_invoice_id,
@@ -200,12 +272,14 @@ def create_or_retry_invoice(
             sent = recovered_remote_invoice
         else:
             send_request_id = str(uuid5(NAMESPACE_URL, f"orchestra-invoice-send:{invoice.id}"))
+            operation["step"] = "send_invoice"
             sent = paypal.send_invoice(invoice.paypal_invoice_id, send_request_id)
         db.refresh(invoice, with_for_update=True)
         if invoice.status != "PAID":
             invoice.status = "SENT"
         payer_view_url = _payer_view_url(sent, invoice.paypal_invoice_id)
         if not payer_view_url and not invoice.paypal_invoice_url:
+            operation["step"] = "fetch_invoice_details"
             details = paypal.get_invoice(invoice.paypal_invoice_id)
             remote_status = details.get("status")
             if isinstance(remote_status, str):
@@ -222,10 +296,11 @@ def create_or_retry_invoice(
                 user_role=None,
             )
             milestone.status = MilestoneStatus.PAYMENT_PENDING.value
+        operation["step"] = "save_invoice_state_to_db"
         db.commit()
         db.refresh(invoice)
         return invoice
-    except PaypalAPIError:
+    except Exception:
         db.rollback()
         db.refresh(milestone)
         if milestone.status == MilestoneStatus.INVOICING.value:
@@ -241,10 +316,33 @@ def _find_reusable_remote_invoice(
 ) -> dict[str, Any] | None:
     invoice_number = payload["detail"]["invoice_number"]
     search_result = paypal.search_invoices(invoice_number)
-    if not isinstance(search_result, dict) or not isinstance(
-        search_result.get("items"), list
-    ):
-        raise PaypalAPIError("PayPal Sandbox returned an invalid invoice search result.")
+    if not isinstance(search_result, dict):
+        raise PaypalAPIError(
+            "PayPal Sandbox returned an invalid invoice search result "
+            f"(result has type {type(search_result).__name__})."
+        )
+    if not search_result:
+        return None
+    if not isinstance(search_result.get("items"), list):
+        items = search_result.get("items")
+        result_shape = (
+            "items missing"
+            if "items" not in search_result
+            else f"items has type {type(items).__name__}"
+        )
+        result_shape += (
+            "; top-level keys="
+            + ",".join(
+                sorted(
+                    key
+                    for key in search_result
+                    if isinstance(key, str)
+                )[:20]
+            )
+        )
+        raise PaypalAPIError(
+            f"PayPal Sandbox returned an invalid invoice search result ({result_shape})."
+        )
     matches = [
         item
         for item in search_result["items"]

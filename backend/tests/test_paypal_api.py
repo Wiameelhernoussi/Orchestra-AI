@@ -3,6 +3,7 @@ import logging
 from app.api.deps import get_paypal_client
 from app.models.invoice import Invoice
 from app.models.webhook import WebhookEvent
+from app.services.paypal.client import PaypalAPIError
 
 
 class FakePaypal:
@@ -61,9 +62,71 @@ def test_provider_cannot_trigger_invoice_creation(api_client, demo_records):
     assert response.status_code == 403
 
 
+def test_invoice_failure_logs_redacted_details_and_returns_safe_reason(
+    api_client, demo_records, caplog
+):
+    class FailingPaypal(FakePaypal):
+        def create_invoice(self, payload, request_id):
+            raise PaypalAPIError(
+                "Request for payer@example.test failed at "
+                "https://sandbox.invalid/?access_token=do-not-log"
+            )
+
+    _install_paypal(api_client, FailingPaypal())
+
+    with caplog.at_level(logging.ERROR, logger="app.services.paypal.invoicing"):
+        response = api_client.post(
+            "/api/v1/payments/milestones/milestone-1/invoice",
+            headers={"X-User-Id": "client-user"},
+        )
+
+    assert response.status_code == 502
+    assert "during create_draft" in response.json()["detail"]
+    assert "[redacted email]" in response.json()["detail"]
+    assert "[redacted URL]" in response.json()["detail"]
+    assert "payer@example.test" not in response.json()["detail"]
+    assert "do-not-log" not in response.json()["detail"]
+    assert "step=create_draft" in caplog.text
+    assert "exception_class=PaypalAPIError" in caplog.text
+    assert "status_code=none" in caplog.text
+    assert "error_name=none" in caplog.text
+    assert "debug_id=none" in caplog.text
+    assert "payer@example.test" not in caplog.text
+    assert "do-not-log" not in caplog.text
+
+
+def test_invoice_failure_logs_paypal_http_diagnostics(
+    api_client, demo_records, caplog
+):
+    class HttpFailingPaypal(FakePaypal):
+        def create_invoice(self, payload, request_id):
+            raise PaypalAPIError(
+                "PayPal Sandbox returned HTTP 422.",
+                status_code=422,
+                error_name="UNPROCESSABLE_ENTITY",
+                issues=("INVOICE_FIELD_INVALID",),
+                debug_id="DEBUG-123",
+            )
+
+    _install_paypal(api_client, HttpFailingPaypal())
+
+    with caplog.at_level(logging.ERROR, logger="app.services.paypal.invoicing"):
+        response = api_client.post(
+            "/api/v1/payments/milestones/milestone-1/invoice",
+            headers={"X-User-Id": "client-user"},
+        )
+
+    assert response.status_code == 502
+    assert "status_code=422" in caplog.text
+    assert "error_name=UNPROCESSABLE_ENTITY" in caplog.text
+    assert "issues=INVOICE_FIELD_INVALID" in caplog.text
+    assert "debug_id=DEBUG-123" in caplog.text
+
+
 def test_invoice_creation_without_approval_is_rejected(api_client, db, demo_records):
     db.delete(demo_records["approval"])
     db.commit()
+    _install_paypal(api_client, FakePaypal())
 
     response = api_client.post(
         "/api/v1/payments/milestones/milestone-1/invoice",
