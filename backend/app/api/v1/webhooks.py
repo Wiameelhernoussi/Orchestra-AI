@@ -8,7 +8,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, get_paypal_client
+from app.models.agreement import Agreement
+from app.models.audit import AuditLog
 from app.models.invoice import Invoice
+from app.models.milestone import Milestone
+from app.models.milestone import Milestone
 from app.models.webhook import WebhookEvent
 from app.services.paypal.client import (
     PaypalAPIError,
@@ -255,6 +259,27 @@ async def receive_paypal_webhook(
                 )
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
             webhook_record.processed = "processed"
+            milestone = db.get(Milestone, invoice.milestone_id)
+            if milestone is not None:
+                agreement = db.get(Agreement, milestone.agreement_id)
+                if agreement is not None:
+                    db.add(
+                        AuditLog(
+                            agreement_id=agreement.id,
+                            user_id=None,
+                            action="paypal_invoice_status_updated",
+                            entity_type="invoice",
+                            entity_id=invoice.id,
+                            details=json.dumps(
+                                {
+                                    "event_id": event_id,
+                                    "event_type": event_type,
+                                    "status": target_status,
+                                },
+                                separators=(",", ":"),
+                            ),
+                        )
+                    )
         else:
             webhook_record.processed = "ignored"
     else:

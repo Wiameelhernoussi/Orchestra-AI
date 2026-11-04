@@ -415,7 +415,11 @@ class IntentAgent:
                         "content": (
                             "Retry: return valid JSON matching the schema exactly. "
                             "Each milestone amount_cents must be an integer and "
-                            "all milestone amounts must sum exactly to budget_cents."
+                            "all milestone amounts must sum exactly to budget_cents. "
+                            "Every milestone must have a non-empty title, at least "
+                            "one non-empty deliverable, and at least one non-empty "
+                            "acceptance criterion. Do not return empty lists for "
+                            "those fields."
                         ),
                     },
                 ]
@@ -454,25 +458,68 @@ class IntentAgent:
 
 def _validate_intent_result(data: dict[str, Any]) -> None:
     try:
+        project_type = data["project_type"]
+        requirements = data["requirements"]
         budget = data["budget_cents"]
+        currency = data["currency"]
         milestones = data["milestones"]
         missing_information = data["missing_information"]
         deadline = data["deadline"]
     except (KeyError, TypeError) as exc:
         raise ValueError("Intent JSON is missing required fields.") from exc
-    if isinstance(budget, bool) or not isinstance(budget, int) or budget < 0:
-        raise ValueError("Intent budget_cents must be a non-negative integer.")
-    if not isinstance(milestones, list) or not isinstance(missing_information, list):
-        raise ValueError("Intent milestones and missing_information must be arrays.")
+    if not isinstance(project_type, str) or not project_type.strip():
+        raise ValueError("Intent project_type must be a non-empty string.")
+    if not isinstance(requirements, list) or any(
+        not isinstance(item, str) for item in requirements
+    ):
+        raise ValueError("Intent requirements must be an array of strings.")
+    if isinstance(budget, bool) or not isinstance(budget, int) or budget <= 0:
+        raise ValueError("Intent budget_cents must be a positive integer.")
+    if not isinstance(currency, str) or len(currency) != 3:
+        raise ValueError("Intent currency must be a three-letter code.")
+    if (
+        not isinstance(milestones, list)
+        or not milestones
+        or not isinstance(missing_information, list)
+        or any(not isinstance(item, str) for item in missing_information)
+    ):
+        raise ValueError(
+            "Intent milestones and missing_information must be arrays; "
+            "at least one milestone is required."
+        )
     if not isinstance(deadline, str):
         raise ValueError("Intent deadline must be a string.")
     total = 0
     for milestone in milestones:
         if not isinstance(milestone, dict):
             raise ValueError("Every intent milestone must be an object.")
+        title = milestone.get("title")
+        deliverables = milestone.get("deliverables")
+        acceptance_criteria = milestone.get("acceptance_criteria")
+        if not isinstance(title, str) or not title.strip():
+            raise ValueError("Every milestone must have a non-empty title.")
+        if (
+            not isinstance(deliverables, list)
+            or not deliverables
+            or any(not isinstance(item, str) or not item.strip() for item in deliverables)
+        ):
+            raise ValueError(
+                "Every milestone must have at least one non-empty deliverable."
+            )
+        if (
+            not isinstance(acceptance_criteria, list)
+            or not acceptance_criteria
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in acceptance_criteria
+            )
+        ):
+            raise ValueError(
+                "Every milestone must have at least one non-empty acceptance criterion."
+            )
         amount = milestone.get("amount_cents")
-        if isinstance(amount, bool) or not isinstance(amount, int) or amount < 0:
-            raise ValueError("Milestone amount_cents must be a non-negative integer.")
+        if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
+            raise ValueError("Milestone amount_cents must be a positive integer.")
         total += amount
     if total != budget:
         raise ValueError("Milestone amounts must sum exactly to budget_cents.")

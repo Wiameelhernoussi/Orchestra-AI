@@ -60,9 +60,9 @@ docker-compose up --build
 
 The frontend is available at http://localhost:5173, the API at
 http://localhost:8000, and the API health check at
-http://localhost:8000/api/v1/health. Phase 1 does not yet include agreement
-management APIs or AI agents. The PayPal Sandbox integration is available for
-persisted, client-approved milestones.
+http://localhost:8000/api/v1/health. Client/provider workflow endpoints and the
+real Groq + PayPal Sandbox demo runner are available in the backend. The UI
+workflow is not yet implemented.
 
 ### Environment Variables
 Copy `backend/.env.example` to `backend/.env`. Add credentials only when
@@ -71,6 +71,8 @@ you are ready to use the corresponding integration:
 - `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` — from [developer.paypal.com](https://developer.paypal.com)
 - `PAYPAL_WEBHOOK_ID` — webhook ID configured in your PayPal sandbox app
 - `DATABASE_URL` — PostgreSQL or SQLite connection string
+- `DEMO_CLIENT_PAYPAL_EMAIL` — Sandbox Personal account email that receives invoices
+- `DEMO_SEED_TOKEN` — private random token required to reset and seed demo data
 
 ### PayPal Sandbox (Phase 2)
 
@@ -101,9 +103,87 @@ public, but every event's signature is verified through PayPal before the
 database is updated. Replayed/forged test payloads do not confirm payment.
 `X-User-Id` is a database-checked demo identity header, not production
 authentication.
-Sandbox credentials, an existing agreement, seeded users, and an approved
-milestone are required for an end-to-end invoice; seed/workflow APIs are planned
-for a later phase.
+Sandbox credentials, seeded users, and a client-approved milestone are required
+for an end-to-end invoice. `X-User-Id` is checked against the database, and every
+agreement route verifies organization membership. The demo seed endpoint deletes
+the current application records before creating the sample agreement, so use it
+only with demo data.
+
+### Phase 4 end-to-end demo
+
+Set `DEMO_CLIENT_PAYPAL_EMAIL` and `DEMO_SEED_TOKEN` in `backend/.env`, along
+with the Groq and PayPal Sandbox credentials. Generate a seed token locally
+without displaying it:
+
+```powershell
+$bytes = New-Object byte[] 32
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$seedToken = [Convert]::ToBase64String($bytes)
+$envPath = '.\backend\.env'
+$tokenEntry = "DEMO_SEED_TOKEN=$seedToken"
+$envLines = Get-Content $envPath
+if ($envLines -match '^DEMO_SEED_TOKEN=') {
+  $envLines = $envLines | ForEach-Object {
+    if ($_ -match '^DEMO_SEED_TOKEN=') { $tokenEntry } else { $_ }
+  }
+} else {
+  $envLines += $tokenEntry
+}
+Set-Content -Path $envPath -Value $envLines
+$rng.Dispose()
+Remove-Variable seedToken, tokenEntry, envLines, bytes, rng
+```
+
+Start the services, then seed the demo explicitly (the script below can also
+seed automatically; do not seed separately if running it without `--no-seed`):
+
+```powershell
+docker compose up -d --build
+$seedToken = ((Get-Content .\backend\.env | Where-Object { $_ -match '^DEMO_SEED_TOKEN=' } | Select-Object -First 1) -replace '^DEMO_SEED_TOKEN=', '')
+$seed = Invoke-RestMethod -Method Post `
+  -Uri http://localhost:8000/api/v1/demo/seed `
+  -Headers @{ 'X-Demo-Seed-Token' = $seedToken }
+Remove-Variable seedToken
+$seed | Select-Object status, client_user_id, provider_user_id, agreement_id
+```
+
+Run the real Groq → review → approval → PayPal Sandbox invoice flow. `--no-seed`
+uses the users created above and avoids clearing database records:
+
+```powershell
+python .\scripts\e2e_real.py --no-seed
+```
+
+The runner stops after invoice creation and prints only the milestone ID,
+PayPal invoice ID, and payer-view link. Open that link and sign in with the
+Sandbox **Personal** account to review and pay the $150 Design invoice. Never
+use a real PayPal account for this Sandbox invoice.
+
+After payment, retrieve the local invoice ID for synchronization and check its
+status. Replace the placeholder with the milestone ID printed by the runner:
+
+```powershell
+$milestoneId = '<milestone id from e2e_real.py>'
+$agreements = Invoke-RestMethod -Uri http://localhost:8000/api/v1/client/agreements `
+  -Headers @{ 'X-User-Id' = 'demo-client' }
+$agreement = $agreements | Where-Object { $_.milestones.id -contains $milestoneId } | Select-Object -First 1
+$milestone = $agreement.milestones | Where-Object { $_.id -eq $milestoneId }
+$localInvoiceId = $milestone.invoices[0].id
+$sync = Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/api/v1/payments/invoices/$localInvoiceId/sync" `
+  -Headers @{ 'X-User-Id' = 'demo-client' }
+$sync | Select-Object status, milestone_id
+$agreements = Invoke-RestMethod -Uri http://localhost:8000/api/v1/client/agreements `
+  -Headers @{ 'X-User-Id' = 'demo-client' }
+$agreement = $agreements | Where-Object { $_.milestones.id -contains $milestoneId } | Select-Object -First 1
+$paidMilestone = $agreement.milestones | Where-Object { $_.id -eq $milestoneId }
+$paidMilestone | Select-Object id, status
+```
+
+Expect invoice `PAID` and milestone `PAID`. A verified PayPal webhook can update
+the same state automatically; `/sync` is the fallback when the webhook is not
+delivered. The following milestone cannot start until this one is paid.
 
 An OAuth `401` means PayPal rejected the configured client ID/secret. Ensure
 they are a matching pair from the Sandbox REST API app (not the Sandbox

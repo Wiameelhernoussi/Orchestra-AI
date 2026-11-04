@@ -1,10 +1,15 @@
 import json
+import logging
 
 import httpx
 import pytest
 
 from app.config import Settings
-from app.services.paypal.client import PaypalClient, PaypalConfigurationError
+from app.services.paypal.client import (
+    PaypalAPIError,
+    PaypalClient,
+    PaypalConfigurationError,
+)
 
 
 def _settings(**overrides):
@@ -109,3 +114,39 @@ def test_live_paypal_endpoint_is_rejected():
 def test_only_sandbox_mode_is_supported():
     with pytest.raises(PaypalConfigurationError, match="Only PayPal Sandbox"):
         PaypalClient(_settings(PAYPAL_MODE="live"))
+
+
+def test_paypal_api_failure_logs_only_safe_diagnostic_fields(caplog):
+    def handler(request):
+        if request.url.path == "/v1/oauth2/token":
+            return httpx.Response(200, json={"access_token": "sandbox-token", "expires_in": 300})
+        return httpx.Response(
+            403,
+            json={
+                "name": "NOT_AUTHORIZED",
+                "message": "A message that must not be logged.",
+                "debug_id": "DEBUG-123",
+                "details": [{"issue": "INVOICE_FIELD_INVALID", "description": "PII"}],
+                "access_token": "must-not-be-logged",
+            },
+        )
+
+    http = httpx.Client(
+        base_url="https://api-m.sandbox.paypal.com",
+        transport=httpx.MockTransport(handler),
+    )
+    paypal = PaypalClient(_settings(), http)
+    with caplog.at_level(logging.WARNING, logger="app.services.paypal.client"):
+        with pytest.raises(PaypalAPIError):
+            paypal.create_invoice({"items": []}, "stable-request-id")
+    http.close()
+
+    assert "operation=create_invoice" in caplog.text
+    assert "status_code=403" in caplog.text
+    assert "error_name=NOT_AUTHORIZED" in caplog.text
+    assert "issues=INVOICE_FIELD_INVALID" in caplog.text
+    assert "debug_id=DEBUG-123" in caplog.text
+    assert "A message that must not be logged" not in caplog.text
+    assert "PII" not in caplog.text
+    assert "must-not-be-logged" not in caplog.text
+    assert "sandbox-token" not in caplog.text

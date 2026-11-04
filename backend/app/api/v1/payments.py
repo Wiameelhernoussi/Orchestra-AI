@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, get_db, get_paypal_client
 from app.models.approval import Approval
 from app.models.agreement import Agreement
+from app.models.audit import AuditLog
 from app.models.invoice import Invoice
 from app.models.milestone import Milestone
 from app.models.user import User
@@ -62,7 +63,20 @@ def create_milestone_invoice(
         raise HTTPException(status_code=409, detail="A recorded client approval is required before invoicing.")
 
     try:
-        return create_or_retry_invoice(db, milestone, current_user.email, paypal)
+        invoice = create_or_retry_invoice(db, milestone, current_user.email, paypal)
+        db.add(
+            AuditLog(
+                agreement_id=agreement.id,
+                user_id=current_user.id,
+                action="invoice_created_or_retried",
+                entity_type="invoice",
+                entity_id=invoice.id,
+                details='{"provider":"paypal_sandbox"}',
+            )
+        )
+        db.commit()
+        db.refresh(invoice)
+        return invoice
     except InvalidTransitionError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -103,6 +117,16 @@ def sync_invoice_status(
         if remote_id != invoice.paypal_invoice_id or not isinstance(remote_status, str):
             raise PaypalAPIError("PayPal Sandbox returned an unexpected invoice.")
         apply_paypal_invoice_status(db, invoice, remote_status)
+        db.add(
+            AuditLog(
+                agreement_id=agreement.id,
+                user_id=current_user.id,
+                action="invoice_status_synchronized",
+                entity_type="invoice",
+                entity_id=invoice.id,
+                details='{"source":"paypal_api"}',
+            )
+        )
         db.commit()
         db.refresh(invoice)
         return invoice

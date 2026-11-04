@@ -241,6 +241,18 @@ def test_intent_retries_once_when_milestone_amounts_do_not_match_budget():
     assert sum(item["amount_cents"] for item in result.data["milestones"]) == 1000
 
 
+def test_intent_retries_once_when_milestone_deliverables_or_criteria_are_empty():
+    invalid = _intent_result()
+    invalid["milestones"][0]["deliverables"] = []
+    provider = MockProvider([invalid, _intent_result()])
+
+    result = IntentAgent(provider, model="openai/gpt-oss-120b").parse("Build a site.")
+
+    assert len(provider.calls) == 2
+    assert result.data["milestones"][0]["deliverables"] == ["Website"]
+    assert "at least one non-empty deliverable" in provider.calls[1]["messages"][-1]["content"]
+
+
 def test_intent_fails_explicitly_after_second_invalid_response():
     provider = MockProvider(
         [GroqResponseError("Invalid JSON."), GroqResponseError("Invalid JSON.")]

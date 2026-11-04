@@ -34,6 +34,43 @@ class FakePaypal:
         return {"id": invoice_id, "status": "SENT"}
 
 
+class DuplicateInvoicePaypal(FakePaypal):
+    def __init__(self):
+        super().__init__()
+        self.invoice_number = ""
+        self.search_calls = []
+        self.get_calls = []
+
+    def create_invoice(self, payload, request_id):
+        self.create_calls.append((payload, request_id))
+        self.invoice_number = payload["detail"]["invoice_number"]
+        raise PaypalAPIError(
+            "Duplicate invoice number.",
+            status_code=422,
+            error_name="UNPROCESSABLE_ENTITY",
+            issues=("DUPLICATE_INVOICE_NUMBER",),
+        )
+
+    def search_invoices(self, invoice_number):
+        self.search_calls.append(invoice_number)
+        return {
+            "items": [
+                {
+                    "id": "PAYPAL-EXISTING-DRAFT",
+                    "detail": {"invoice_number": self.invoice_number},
+                }
+            ]
+        }
+
+    def get_invoice(self, invoice_id):
+        self.get_calls.append(invoice_id)
+        return {
+            "id": invoice_id,
+            "status": "DRAFT",
+            "detail": {"invoice_number": self.invoice_number},
+        }
+
+
 def test_invoice_payload_uses_cents_and_the_approved_client_email(demo_records):
     payload = build_invoice_payload(
         demo_records["milestone"],
@@ -78,6 +115,33 @@ def test_repeated_invoice_request_does_not_create_a_duplicate(db, demo_records):
     second = create_or_retry_invoice(db, milestone, "alice@example.test", paypal)
 
     assert first.id == second.id
+    assert len(paypal.create_calls) == 1
+    assert len(paypal.send_calls) == 1
+
+
+def test_payer_view_link_falls_back_to_sandbox_invoice_view_route():
+    from app.services.paypal.invoicing import _payer_view_url
+
+    assert _payer_view_url({}, "INV2-EXISTING-123") == (
+        "https://www.sandbox.paypal.com/invoice/payerView/details/INV2-EXISTING-123"
+    )
+
+
+def test_duplicate_invoice_number_recovers_existing_sandbox_draft(db, demo_records):
+    paypal = DuplicateInvoicePaypal()
+
+    invoice = create_or_retry_invoice(
+        db,
+        demo_records["milestone"],
+        "alice@example.test",
+        paypal,
+    )
+
+    assert invoice.paypal_invoice_id == "PAYPAL-EXISTING-DRAFT"
+    assert invoice.status == "SENT"
+    assert demo_records["milestone"].status == "PAYMENT_PENDING"
+    assert paypal.search_calls == [paypal.invoice_number]
+    assert paypal.get_calls == ["PAYPAL-EXISTING-DRAFT"]
     assert len(paypal.create_calls) == 1
     assert len(paypal.send_calls) == 1
 

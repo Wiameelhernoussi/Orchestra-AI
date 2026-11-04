@@ -51,10 +51,10 @@ Amounts are stored as integer cents. Invoice creation uses a stable
 `PayPal-Request-Id` (persisted on the invoice) and is separate from the human
 approval action.
 
-The demo role switcher is UI-only in this phase. Before workflow APIs are added,
-the backend must resolve `X-User-Id` to a seeded user and verify that user's
-organization is a member of the requested agreement; audit-log access follows
-the same check.
+The demo role switcher is UI-only. Workflow routes resolve `X-User-Id` to a
+database user and verify that user's role and organization against the
+agreement; audit-log access follows the same membership check. The reset/seed
+endpoint is protected by `DEMO_SEED_TOKEN`.
 
 ## AI Agents
 
@@ -85,7 +85,11 @@ The demo supports `--cache` so repeat runs can reuse model outputs.
 - `POST /api/v1/payments/milestones/{milestone_id}/invoice` requires a
   database-verified client user, agreement membership, and a recorded human
   approval. Invoice creation and sending are retryable and use persisted
-  `PayPal-Request-Id` values.
+  `PayPal-Request-Id` values. If PayPal reports a duplicate invoice number after
+  an ambiguous create response, the service searches for that exact number,
+  verifies the matching invoice, and resumes it instead of creating another.
+  When PayPal omits the payer-view link, the service returns the Sandbox
+  payer-view route for the verified invoice ID.
 - `POST /api/v1/webhooks/paypal` verifies the PayPal transmission signature with
   PayPal before processing `INVOICING.INVOICE.PAID` or
   `INVOICING.INVOICE.CANCELLED`. It extracts invoice IDs from supported
@@ -97,6 +101,10 @@ The demo supports `--cache` so repeat runs can reuse model outputs.
 - `POST /api/v1/payments/invoices/{invoice_id}/sync` reads the invoice directly
   from PayPal for an agreement member; it does not trust a browser redirect.
 - Amounts remain integer cents in the database and use `Decimal` for API values.
+After the final milestone's verified payment, the deterministic workflow
+transitions the agreement to `COMPLETED`. The real runner
+(`scripts/e2e_real.py`) parses the request with Groq and stops after creating
+the first PayPal Sandbox invoice.
 
 Configure the active tunnel as the Sandbox app's webhook URL:
 `https://mutable-levitate-alkaline.ngrok-free.dev/api/v1/webhooks/paypal`.
@@ -119,10 +127,10 @@ account as the invoicer and the sandbox Personal account as payer.
    availability in the official [Groq model catalog](https://console.groq.com/docs/models)
    before implementation. Missing details remain explicit; evidence output is
    advisory.
-4. **Workflow API:** add DB-verified `X-User-Id` demo identity, seed client and
-   provider accounts, enforce agreement organization membership on every
-   operation (including audit logs), then connect the API to the state machine,
-   agents, invoices, and audit log.
+4. **Workflow API:** implemented DB-verified `X-User-Id` demo identity,
+   protected demo seeding, client/provider routes, organization membership
+   checks, sequential milestone transitions, evidence assessment, human
+   approval, invoice retry, and audit logs.
 5. **Demo UI:** implement the request/review flow, local evidence uploads and
    sample screenshots, human approval, invoice retry, and payment status.
 6. **Hackathon delivery:** publish the MIT-licensed repository, prepare a

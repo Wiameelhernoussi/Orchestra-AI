@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     GROQ_EVIDENCE_MAX_COMPLETION_TOKENS: int = 800
     GROQ_MAX_RETRIES: int = 2
     GROQ_MAX_RETRY_WAIT_SECONDS: int = 60
+    DEMO_CLIENT_PAYPAL_EMAIL: str = ""
+    DEMO_SEED_TOKEN: str = ""
     PAYPAL_CLIENT_ID: str = ""
     PAYPAL_CLIENT_SECRET: str = ""
     PAYPAL_WEBHOOK_ID: str = ""

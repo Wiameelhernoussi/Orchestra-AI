@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import re
 import time
 from typing import Any
 from urllib.parse import urlparse
@@ -8,14 +10,87 @@ import httpx
 
 from app.config import Settings
 
+logger = logging.getLogger(__name__)
+
+
+def _safe_error_field(value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        return "none"
+    return re.sub(r"[^A-Za-z0-9._:-]", "_", value[:100])
+
+
+def _operation_name(method: str, path: str) -> str:
+    if path == "/v1/oauth2/token":
+        return "oauth_token"
+    if path == "/v2/invoicing/invoices" and method == "POST":
+        return "create_invoice"
+    if path.endswith("/send"):
+        return "send_invoice"
+    if path.startswith("/v2/invoicing/invoices/"):
+        return "get_invoice"
+    if path == "/v2/invoicing/search-invoices":
+        return "search_invoices"
+    if path == "/v1/notifications/verify-webhook-signature":
+        return "verify_webhook"
+    return "other"
+
+
+def _log_paypal_failure(
+    *,
+    operation: str,
+    status_code: int,
+    response: httpx.Response,
+) -> tuple[str | None, tuple[str, ...], str | None]:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    error_name = payload.get("name") if isinstance(payload, dict) else None
+    debug_id = payload.get("debug_id") if isinstance(payload, dict) else None
+    details = payload.get("details") if isinstance(payload, dict) else None
+    issues = (
+        tuple(
+            _safe_error_field(item.get("issue"))
+            for item in details[:5]
+            if isinstance(item, dict) and isinstance(item.get("issue"), str)
+        )
+        if isinstance(details, list)
+        else ()
+    )
+    logger.warning(
+        "paypal_api_failure operation=%s status_code=%d error_name=%s "
+        "issues=%s debug_id=%s",
+        operation,
+        status_code,
+        _safe_error_field(error_name),
+        ",".join(issues) or "none",
+        _safe_error_field(debug_id),
+    )
+    return (
+        error_name if isinstance(error_name, str) else None,
+        issues,
+        debug_id if isinstance(debug_id, str) else None,
+    )
+
 
 class PaypalConfigurationError(Exception):
     pass
 
 
 class PaypalAPIError(Exception):
-    def __init__(self, message: str, status_code: int | None = None):
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        *,
+        error_name: str | None = None,
+        issues: tuple[str, ...] = (),
+        debug_id: str | None = None,
+    ):
         self.status_code = status_code
+        self.error_name = error_name
+        self.issues = issues
+        self.debug_id = debug_id
         super().__init__(message)
 
 
@@ -117,9 +192,17 @@ class PaypalClient:
             raise PaypalAPIError("PayPal Sandbox request failed.") from exc
 
         if not response.is_success:
+            error_name, issues, debug_id = _log_paypal_failure(
+                operation=_operation_name(method, path),
+                status_code=response.status_code,
+                response=response,
+            )
             raise PaypalAPIError(
                 f"PayPal Sandbox returned HTTP {response.status_code}.",
                 status_code=response.status_code,
+                error_name=error_name,
+                issues=issues,
+                debug_id=debug_id,
             )
         if not response.content:
             return {}
@@ -146,9 +229,17 @@ class PaypalClient:
             raise PaypalAPIError("PayPal Sandbox authentication request failed.") from exc
 
         if not response.is_success:
+            error_name, issues, debug_id = _log_paypal_failure(
+                operation="oauth_token",
+                status_code=response.status_code,
+                response=response,
+            )
             raise PaypalAPIError(
                 f"PayPal Sandbox authentication returned HTTP {response.status_code}.",
                 status_code=response.status_code,
+                error_name=error_name,
+                issues=issues,
+                debug_id=debug_id,
             )
         try:
             result = response.json()

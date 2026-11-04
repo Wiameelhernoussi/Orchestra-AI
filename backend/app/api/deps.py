@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings, settings
 from app.database import get_db
 from app.models.user import User
+from app.services.groq_agents import GroqAgentClient
 from app.services.paypal.client import PaypalClient, PaypalConfigurationError
 
 
@@ -32,6 +33,22 @@ def get_paypal_client(
         client = PaypalClient(config)
     except PaypalConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    try:
+        yield client
+    finally:
+        client.close()
+
+
+def get_completion_provider(
+    config: Settings = Depends(get_settings),
+) -> Generator[GroqAgentClient, None, None]:
+    if not config.GROQ_API_KEY:
+        raise HTTPException(status_code=503, detail="Groq is not configured.")
+    client = GroqAgentClient(
+        config.GROQ_API_KEY,
+        max_retries=config.GROQ_MAX_RETRIES,
+        max_retry_wait_seconds=config.GROQ_MAX_RETRY_WAIT_SECONDS,
+    )
     try:
         yield client
     finally:
