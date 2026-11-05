@@ -1,14 +1,20 @@
-import { useState } from 'react';
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { useRole } from '../../context/RoleContext';
 
 function Layout() {
   const { role, user, setRole, demoMode, demoModeError } = useRole();
   const navigate = useNavigate();
+  const location = useLocation();
   const [resetting, setResetting] = useState(false);
   const [resetError, setResetError] = useState('');
   const isClient = role === 'client';
+
+  useEffect(() => {
+    if (location.pathname.startsWith('/client') && role !== 'client') setRole('client');
+    if (location.pathname.startsWith('/provider') && role !== 'provider') setRole('provider');
+  }, [location.pathname, role, setRole]);
 
   async function resetDemo() {
     if (!window.confirm('Reset the demo agreements and return to the sample $600 project?')) {
@@ -40,7 +46,7 @@ function Layout() {
     : [{ to: '/provider', label: 'My work', end: true }];
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell role-${role}`}>
       <header className="topbar">
         <div className="topbar-main">
           <div className="brand-group">
@@ -49,7 +55,7 @@ function Layout() {
               <span>ORCHESTRA <b>AI</b></span>
             </Link>
             <p className="brand-tagline">
-              From intent to agreement. From evidence to approval. From approval to payment.
+              {isClient ? 'Review, approve, pay.' : 'Deliver, submit, get paid.'}
             </p>
           </div>
           <div className="topbar-actions">
@@ -96,7 +102,7 @@ function Layout() {
             ))}
           </nav>
           <div className="session-identity">
-            <span className={`avatar avatar-${role}`}>{isClient ? 'SC' : 'DA'}</span>
+            <span className={`avatar avatar-${role}`} aria-hidden="true">{isClient ? 'SC' : 'DS'}</span>
             <span>
               <strong>{user.orgName}</strong>
               <small>{isClient ? 'Client workspace' : 'Provider workspace'}</small>
@@ -115,14 +121,23 @@ function Layout() {
           </div>
         )}
         {demoModeError && <div className="alert alert-warning" role="status">{demoModeError}</div>}
+        <aside className={`workspace-role-banner workspace-role-${role}`} aria-label={`${isClient ? 'Client' : 'Provider'} role permissions`}>
+          <span className="workspace-role-icon" aria-hidden="true">{isClient ? '✓' : '↗'}</span>
+          <span className="workspace-role-copy">
+            <strong>{isClient ? 'Client workspace · Review, approve, pay' : 'Provider workspace · Deliver, submit, get paid'}</strong>
+            <small>{isClient
+              ? 'You can review evidence, request revisions, approve deliverables, and pay invoices. You cannot submit provider evidence.'
+              : 'You can deliver work and submit evidence. You cannot approve your own deliverables or confirm PayPal payments.'}</small>
+          </span>
+        </aside>
         <Outlet />
       </main>
       <footer className="app-footer">
         <span>ORCHESTRA AI</span>
         <span>
           {demoMode === 'mock'
-            ? 'Structured agreements · Human-approved decisions · Simulated payments'
-            : 'Structured agreements · Human-approved payments · PayPal Sandbox'}
+            ? 'From intent to agreement. From evidence to approval. From approval to payment. · Simulated payments'
+            : 'From intent to agreement. From evidence to approval. From approval to payment. · PayPal Sandbox'}
         </span>
       </footer>
     </div>

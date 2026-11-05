@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, formatMoney, type Agreement } from '../../api';
+import { api, type Agreement } from '../../api';
 import { NextStep } from '../../components/NextStep';
 import { useRole } from '../../context/RoleContext';
-import { DataGrid } from '../../components/DataGrid';
-import type { ColDef } from 'ag-grid-community';
+import { AgreementCards } from '../../components/AgreementCards';
 
 function ClientDashboard() {
   const { user } = useRole();
@@ -24,34 +23,13 @@ function ClientDashboard() {
   }, [user.id]);
 
   useEffect(() => { void load(); }, [load]);
-  const columns: ColDef<Agreement>[] = [
-    { field: 'title', headerName: 'Agreement', minWidth: 220 },
-    { field: 'status', headerName: 'Status', maxWidth: 150 },
-    {
-      headerName: 'Paid / total',
-      valueGetter: ({ data }) => data ? `${formatMoney(data.milestones.filter((item) => item.status === 'PAID').reduce((sum, item) => sum + item.amount_cents, 0))} / ${formatMoney(data.total_amount_cents)}` : '',
-      minWidth: 180,
-    },
-    {
-      headerName: 'Milestones paid',
-      valueGetter: ({ data }) => data ? `${data.milestones.filter((item) => item.status === 'PAID').length} / ${data.milestones.length}` : '',
-      maxWidth: 170,
-    },
-    {
-      headerName: '',
-      sortable: false,
-      filter: false,
-      maxWidth: 110,
-      cellRenderer: ({ data }: { data?: Agreement }) => data ? <Link to={`/client/agreements/${data.id}`}>Open ↗</Link> : null,
-    },
-  ];
 
   return (
     <>
       <div className="page-heading">
         <div>
           <p className="eyebrow">CLIENT WORKSPACE</p>
-          <h1>Your agreements, in harmony.</h1>
+          <h1>Review, approve, pay.</h1>
           <p className="page-subtitle">Track milestones, review evidence, and approve payment with confidence.</p>
         </div>
         <Link className="button button-primary" to="/client/new">
@@ -59,9 +37,11 @@ function ClientDashboard() {
         </Link>
       </div>
       <NextStep>
-        {agreements.length
-          ? 'Open an agreement to review its milestones and the provider’s latest evidence.'
-          : 'Describe a project to create your first structured agreement.'}
+        {agreements.length > 0 && agreements.every((item) => item.status === 'COMPLETED')
+          ? 'All milestones are paid. Agreement completed.'
+          : agreements.length
+            ? 'Open an agreement to review its milestones and the provider’s latest evidence.'
+            : 'Describe a project to create your first structured agreement.'}
       </NextStep>
 
       {error && <div className="alert alert-error" role="alert">{error} <button className="text-button" onClick={() => void load()}>Retry</button></div>}
@@ -75,7 +55,7 @@ function ClientDashboard() {
           <Link className="button button-primary" to="/client/new">Create an agreement</Link>
         </section>
       ) : (
-        <DataGrid rows={agreements} columns={columns} label="Client agreements" />
+        <AgreementCards agreements={agreements} role="client" />
       )}
     </>
   );

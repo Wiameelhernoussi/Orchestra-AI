@@ -216,8 +216,21 @@ class DemoMockProvider:
         reasoning_effort: str = "low",
     ) -> AgentResult:
         if schema_name == "business_intent":
+            request_text = str(messages[-1].get("content", ""))
+            project_match = re.search(
+                r"\b(?:build|create|design|develop|make)\s+"
+                r"(?:a|an|the)?\s*(.{3,48}?)(?=\s+(?:for|with|by|that)\b|[,.!?]|$)",
+                request_text,
+                flags=re.IGNORECASE,
+            )
+            project_type = (
+                re.sub(r"\$\s?\d+(?:[,.]\d+)?", "", project_match.group(1)).strip()
+                if project_match
+                else "Project"
+            )
+            project_type = " ".join(project_type.split()).title() or "Project"
             data = {
-                "project_type": "E-commerce website",
+                "project_type": project_type,
                 "requirements": ["Website delivery by a digital agency"],
                 "budget_cents": 60000,
                 "currency": "USD",
@@ -256,30 +269,65 @@ class DemoMockProvider:
         if schema_name == "evidence_assessment":
             prompt = json.loads(str(messages[-1].get("content", "{}")))
             criteria = prompt.get("acceptance_criteria", [])
-            facts = prompt.get("trusted_link_facts", [])
-            verified_links = [
-                fact.get("url")
-                for fact in facts
-                if isinstance(fact, dict) and fact.get("result") == "checked"
-            ]
+            submitted_evidence = prompt.get("submitted_evidence", "")
+            try:
+                evidence = json.loads(submitted_evidence)
+            except (TypeError, json.JSONDecodeError):
+                evidence = {"text": str(submitted_evidence), "links": []}
+            evidence_parts: list[str] = []
+            if isinstance(evidence, dict):
+                text = evidence.get("text")
+                links = evidence.get("links")
+                if isinstance(text, str):
+                    evidence_parts.append(text)
+                if isinstance(links, list):
+                    evidence_parts.extend(
+                        item for item in links if isinstance(item, str)
+                    )
+            evidence_text = " ".join(evidence_parts).casefold()
+            stop_words = {
+                "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
+                "in", "included", "is", "it", "of", "on", "or", "that", "the",
+                "this", "to", "with",
+            }
             results = [
                 {
                     "criterion": criterion,
-                    "status": "verified" if verified_links and index == 0 else "not_verifiable",
-                    "explanation": (
-                        "Mock mode confirms only that a public link returned an HTTP response; "
-                        "a person must still review whether it proves this criterion."
-                        if verified_links and index == 0
-                        else "Mock mode does not evaluate submitted work."
+                    "status": (
+                        "verified"
+                        if (
+                            required_terms := {
+                                term
+                                for term in re.findall(
+                                    r"[a-z0-9]+", str(criterion).casefold()
+                                )
+                                if term not in stop_words
+                            }
+                        )
+                        and required_terms.issubset(
+                            set(re.findall(r"[a-z0-9]+", evidence_text))
+                        )
+                        else "missing"
                     ),
+                    "explanation": "Mock mode simulates text matching only; human review is required.",
                 }
-                for index, criterion in enumerate(criteria)
+                for criterion in criteria
             ]
+            verified_count = sum(
+                item["status"] == "verified" for item in results
+            )
+            verdict = (
+                "sufficient"
+                if results and verified_count == len(results)
+                else "partial"
+                if verified_count
+                else "insufficient"
+            )
             return AgentResult(
                 data={
                     "criteria_results": results,
-                    "overall_verdict": "partial" if verified_links else "insufficient",
-                    "report": "Mock evidence assessment; human review is required.",
+                    "overall_verdict": verdict,
+                    "report": "Mock text-match advisory; human review is required.",
                     "revision_request_draft": "",
                 },
                 usage=TokenUsage(0, 0, 0),
@@ -731,6 +779,18 @@ def _add_criteria_quality(data: dict[str, Any]) -> dict[str, Any]:
 
 def _assess_criterion_quality(criterion: str) -> dict[str, Any]:
     normalized = criterion.casefold()
+    if "client" in normalized and re.search(r"\bapprov\w*\b", normalized):
+        return {
+            "criterion": criterion,
+            "objectively_verifiable": False,
+            "reason": (
+                "Circular criterion: client approval is the separate human decision "
+                "gate and cannot serve as evidence of completion."
+            ),
+            "rewritten_criterion": (
+                "The deliverable is attached or linked and opens successfully for review."
+            ),
+        }
     vague_terms = [term for term in _VAGUE_CRITERION_TERMS if term in normalized]
     if not vague_terms:
         return {
@@ -740,11 +800,7 @@ def _assess_criterion_quality(criterion: str) -> dict[str, Any]:
             "rewritten_criterion": "",
         }
 
-    if "approved" in normalized and "client" in normalized:
-        rewrite = (
-            "The client's explicit approval is recorded in the agreement workflow."
-        )
-    elif "format" in normalized or "agreed" in normalized:
+    if "format" in normalized or "agreed" in normalized:
         rewrite = "Each deliverable is provided in [specified file format]."
     else:
         rewrite = (

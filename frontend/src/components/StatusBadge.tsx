@@ -1,4 +1,5 @@
 import type { AgreementStatus, MilestoneStatus } from '../api';
+import { useEffect, useRef, useState } from 'react';
 
 type Status = AgreementStatus | MilestoneStatus | string;
 
@@ -23,6 +24,16 @@ const LABELS: Record<string, string> = {
 };
 
 export function StatusBadge({ status }: { status: Status }) {
+  const previousStatus = useRef(status);
+  const [changed, setChanged] = useState(false);
+  useEffect(() => {
+    if (previousStatus.current === status) return;
+    previousStatus.current = status;
+    setChanged(true);
+    const timer = window.setTimeout(() => setChanged(false), 650);
+    return () => window.clearTimeout(timer);
+  }, [status]);
+
   const tone =
     status === 'PAID' || status === 'COMPLETED'
       ? 'success'
@@ -35,7 +46,7 @@ export function StatusBadge({ status }: { status: Status }) {
             : 'neutral';
 
   return (
-    <span className={`status-badge status-${tone}`}>
+    <span className={`status-badge status-${tone}${changed ? ' status-changed' : ''}`}>
       <span className="status-dot" aria-hidden="true" />
       {LABELS[status] ?? status.replace(/_/g, ' ')}
     </span>

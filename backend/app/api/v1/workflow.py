@@ -681,8 +681,19 @@ def submit_evidence(
         entity_id=milestone.id,
         details={
             "evidence_id": evidence.id,
-            "ai_verdict": assessment.data["overall_verdict"],
-            "ai_advisory_only": True,
+        },
+    )
+    _record_audit(
+        db,
+        agreement,
+        "ai_advisory_generated",
+        user=None,
+        entity_type="milestone",
+        entity_id=milestone.id,
+        details={
+            "evidence_id": evidence.id,
+            "verdict": assessment.data["overall_verdict"],
+            "advisory_only": True,
         },
     )
     db.commit()
@@ -825,6 +836,7 @@ def seed_demo(
         Organization.id.in_(["demo-client-org", "demo-provider-org"])
     ).delete(synchronize_session=False)
     db.flush()
+    db.expunge_all()
 
     client_org = Organization(id="demo-client-org", name="ShopFlow Inc")
     provider_org = Organization(id="demo-provider-org", name="DevStudio Agency")
@@ -867,20 +879,32 @@ def seed_demo(
         (
             "Design",
             15000,
-            ["Responsive website design for mobile and desktop"],
-            ["Client can review and approve desktop and mobile layouts"],
+            [
+                "Mockups for Home, Catalog, Product, Cart, and Account pages",
+                "Style guide",
+            ],
+            [
+                "Mockups for the Home, Catalog, Product, Cart, and Account pages are included in the submitted files.",
+                "A style guide is included in the submitted files.",
+            ],
         ),
         (
             "Development",
             35000,
-            ["Working e-commerce website"],
-            ["The agreed website features work in the staging environment"],
+            ["Responsive website deployed to public staging"],
+            [
+                "A public HTTPS staging URL is provided and returns HTTP 2xx.",
+                "The staging layout is responsive at mobile (375 px) and desktop (1280 px) widths.",
+            ],
         ),
         (
             "Final Handover",
             10000,
-            ["Source code and deployment instructions"],
-            ["Client receives source code and deployment documentation"],
+            ["Project documentation and source repository"],
+            [
+                "A project documentation file is included in the handover package.",
+                "A source repository URL is provided and returns HTTP 2xx.",
+            ],
         ),
     )
     for order, (title, amount, deliverables, criteria) in enumerate(demo_milestones, 1):

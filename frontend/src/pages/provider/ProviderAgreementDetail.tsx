@@ -1,17 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, formatMoney, type Agreement } from '../../api';
+import { api, formatMoney, type Agreement, type AuditEntry } from '../../api';
 import { AdvisoryCard } from '../../components/AdvisoryCard';
 import { MilestoneTracker } from '../../components/MilestoneTracker';
 import { NextStep } from '../../components/NextStep';
 import { StatusBadge } from '../../components/StatusBadge';
 import { useRole } from '../../context/RoleContext';
 import { InvoiceTable } from '../../components/InvoiceTable';
+import {
+  agreementNextStep,
+  DESIGN_SAMPLE_PARTIAL,
+  DESIGN_SAMPLE_SUFFICIENT,
+} from '../../presentation';
 
 function ProviderAgreementDetail() {
   const { id = '' } = useParams();
-  const { user } = useRole();
+  const { user, demoMode } = useRole();
   const [agreement, setAgreement] = useState<Agreement | null>(null);
+  const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -22,7 +28,12 @@ function ProviderAgreementDetail() {
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
-      setAgreement(await api.getAgreement('provider', id, user.id));
+      const [nextAgreement, nextAudit] = await Promise.all([
+        api.getAgreement('provider', id, user.id),
+        api.auditLogs(user.id, id),
+      ]);
+      setAgreement(nextAgreement);
+      setAudit(nextAudit);
       setError('');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Agreement could not be loaded.');
@@ -70,7 +81,6 @@ function ProviderAgreementDetail() {
   if (loading) return <div className="loading-panel"><span className="spinner" /> Loading agreement…</div>;
   if (!agreement) return <div className="alert alert-error" role="alert">{error || 'Agreement not found.'} <Link to="/provider">Back to work</Link></div>;
 
-  const currentMilestone = agreement.milestones.find((item) => item.status !== 'PAID');
   return (
     <>
       <div className="breadcrumb"><Link to="/provider">My work</Link><span>/</span><span>{agreement.title}</span></div>
@@ -78,17 +88,7 @@ function ProviderAgreementDetail() {
         <div><p className="eyebrow">PROVIDER AGREEMENT</p><h1>{agreement.title}</h1><p className="page-subtitle">{formatMoney(agreement.total_amount_cents)} total · {agreement.milestones.length} milestones</p></div>
         <StatusBadge status={agreement.status} />
       </div>
-      <NextStep>
-        {agreement.status === 'PROPOSED'
-          ? 'Review the scope, then accept the proposal to begin delivery.'
-          : currentMilestone?.status === 'PENDING' || currentMilestone?.status === 'REVISION_REQUESTED'
-            ? `Start ${currentMilestone.title} when you are ready. Later milestones unlock only after the previous payment is confirmed.`
-            : currentMilestone?.status === 'IN_PROGRESS'
-              ? 'Submit evidence for each acceptance criterion, then send the milestone for client review.'
-              : hasPendingPayment
-                ? 'The client has approved this milestone. Payment confirmation is being checked automatically.'
-                : 'The client is reviewing the submitted evidence.'}
-      </NextStep>
+      <NextStep>{agreementNextStep(agreement, 'provider')}</NextStep>
       {error && <div className="alert alert-error" role="alert">{error} <button type="button" className="text-button" onClick={() => void load()}>Retry</button></div>}
 
       {agreement.status === 'PROPOSED' && (
@@ -129,6 +129,16 @@ function ProviderAgreementDetail() {
             {milestone.status === 'IN_PROGRESS' && (
               <div className="evidence-form">
                 <h3 className="subsection-title">Submit evidence</h3>
+                {demoMode === 'mock' && milestone.order === 1 && (
+                  <details className="sample-evidence">
+                    <summary>Use sample design evidence for the demo</summary>
+                    <p className="muted">In mock mode, the AI advisory simulates criterion matching. Client approval remains a separate human decision.</p>
+                    <div className="form-actions">
+                      <button type="button" className="button button-secondary" onClick={() => setEvidenceText((current) => ({ ...current, [milestone.id]: DESIGN_SAMPLE_PARTIAL }))}>Load partial sample</button>
+                      <button type="button" className="button button-secondary" onClick={() => setEvidenceText((current) => ({ ...current, [milestone.id]: DESIGN_SAMPLE_SUFFICIENT }))}>Load complete sample</button>
+                    </div>
+                  </details>
+                )}
                 <label className="field"><span>What did you deliver?</span><textarea className="text-area" rows={3} value={evidenceText[milestone.id] ?? ''} onChange={(event) => setEvidenceText((current) => ({ ...current, [milestone.id]: event.target.value }))} placeholder="Describe the completed work and how it meets the criteria…" /></label>
                 <label className="field"><span>Evidence links <small>one URL per line</small></span><textarea className="text-area compact-area" rows={2} value={evidenceLinks[milestone.id] ?? ''} onChange={(event) => setEvidenceLinks((current) => ({ ...current, [milestone.id]: event.target.value }))} placeholder="https://…" /></label>
                 <div className="form-actions">
@@ -161,6 +171,16 @@ function ProviderAgreementDetail() {
               <div className="provider-payment-status">
                 <span>Invoice {milestone.invoices[0].paypal_invoice_id ?? 'being prepared'}</span>
                 <StatusBadge status={milestone.invoices[0].status} />
+                {milestone.invoices[0].status === 'PAID' && audit.some((entry) =>
+                  entry.action === 'paypal_invoice_status_updated'
+                  && entry.entity_id === milestone.invoices[0].id
+                  && entry.details.status === 'PAID',
+                ) && (
+                  <p className="webhook-confirmed" role="status" aria-live="polite">
+                    <span aria-hidden="true">✓</span>
+                    <span><strong>Payment confirmed by PayPal webhook</strong><small>Milestone marked paid · event traced in activity</small></span>
+                  </p>
+                )}
                 {milestone.status === 'PAYMENT_PENDING' && (
                   <button type="button" className="button button-secondary" disabled={busy !== ''} onClick={() => void act(`sync-${milestone.id}`, () => api.syncInvoice(user.id, milestone.invoices[0].id))}>{busy === `sync-${milestone.id}` ? 'Refreshing…' : 'Refresh payment status'}</button>
                 )}

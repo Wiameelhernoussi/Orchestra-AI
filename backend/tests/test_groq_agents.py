@@ -9,6 +9,7 @@ from app.services.groq_agents import (
     AgentResult,
     GROQ_CHAT_COMPLETIONS_URL,
     AgentOutputCache,
+    DemoMockProvider,
     GroqAgentClient,
     GroqAPIError,
     GroqRateLimitError,
@@ -252,6 +253,75 @@ def test_vague_criterion_has_noninvented_quality_rewrite():
     assert quality["objectively_verifiable"] is False
     assert "subjective" in quality["reason"]
     assert "[observable result or measurable threshold]" in quality["rewritten_criterion"]
+
+
+def test_client_approval_criterion_is_circular_and_rewritten_objectively():
+    intent = _intent_result()
+    intent["milestones"][0]["acceptance_criteria"] = [
+        "Design approved by client"
+    ]
+    result = IntentAgent(
+        MockProvider([intent]), model="openai/gpt-oss-120b"
+    ).parse("Build a site.")
+
+    quality = result.data["milestones"][0]["criteria_quality"][0]
+    assert quality["objectively_verifiable"] is False
+    assert "circular" in quality["reason"].casefold()
+    assert "approval" not in quality["rewritten_criterion"].casefold()
+    assert "opens successfully" in quality["rewritten_criterion"]
+
+
+def test_demo_mock_provider_returns_partial_then_sufficient_sample_advisories():
+    criteria = [
+        "Mockups for the Home, Catalog, Product, Cart, and Account pages are included in the submitted files.",
+        "A style guide is included in the submitted files.",
+    ]
+    partial_text = (
+        "Mockups for the Home, Catalog, Product, and Account pages are included "
+        "in the submitted files. A style guide is included in the submitted files."
+    )
+    complete_text = (
+        "Mockups for the Home, Catalog, Product, Cart, and Account pages are "
+        "included in the submitted files. A style guide is included in the submitted files."
+    )
+    provider = DemoMockProvider()
+
+    def assess(text):
+        return provider.complete_json(
+            model="mock",
+            messages=[
+                {"role": "user", "content": json.dumps({
+                    "acceptance_criteria": criteria,
+                    "submitted_evidence": json.dumps({"text": text, "links": []}),
+                })},
+            ],
+            schema_name="evidence_assessment",
+            schema={},
+            max_completion_tokens=0,
+        ).data
+
+    partial = assess(partial_text)
+    complete = assess(complete_text)
+
+    assert partial["overall_verdict"] == "partial"
+    assert [item["status"] for item in partial["criteria_results"]] == [
+        "missing",
+        "verified",
+    ]
+    assert complete["overall_verdict"] == "sufficient"
+    assert all(item["status"] == "verified" for item in complete["criteria_results"])
+
+
+def test_demo_mock_intent_title_is_derived_from_the_request():
+    result = DemoMockProvider().complete_json(
+        model="mock",
+        messages=[{"role": "user", "content": "Build a portfolio site for $600."}],
+        schema_name="business_intent",
+        schema={},
+        max_completion_tokens=0,
+    )
+
+    assert result.data["project_type"] == "Portfolio Site"
 
 
 def test_intent_retries_once_when_milestone_deliverables_or_criteria_are_empty():

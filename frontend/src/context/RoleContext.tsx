@@ -36,7 +36,9 @@ interface RoleContextType {
 const RoleContext = createContext<RoleContextType | null>(null);
 
 export function RoleProvider({ children }: { children: ReactNode }) {
-  const [role, setRole] = useState<Role>('client');
+  const [role, setRole] = useState<Role>(() =>
+    window.location.pathname.startsWith('/provider') ? 'provider' : 'client',
+  );
   const [demoMode, setDemoMode] = useState<'mock' | 'real'>('real');
   const [demoModeError, setDemoModeError] = useState('');
 

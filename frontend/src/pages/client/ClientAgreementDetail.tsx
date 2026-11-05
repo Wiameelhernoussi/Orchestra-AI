@@ -7,8 +7,7 @@ import { NextStep } from '../../components/NextStep';
 import { StatusBadge } from '../../components/StatusBadge';
 import { useRole } from '../../context/RoleContext';
 import { InvoiceTable } from '../../components/InvoiceTable';
-import { DataGrid } from '../../components/DataGrid';
-import type { ColDef } from 'ag-grid-community';
+import { activityDescription, agreementNextStep } from '../../presentation';
 
 function evidenceText(content: string): { text: string; links: string[] } {
   try {
@@ -95,22 +94,6 @@ function ClientAgreementDetail() {
     return <div className="alert alert-error" role="alert">{error || 'Agreement not found.'} <Link to="/client">Back to agreements</Link></div>;
   }
   const paidTotal = agreement.milestones.filter((item) => item.status === 'PAID').reduce((sum, item) => sum + item.amount_cents, 0);
-  const auditColumns: ColDef<AuditEntry>[] = [
-    { field: 'action', headerName: 'Action', minWidth: 170 },
-    { field: 'entity_type', headerName: 'Entity', maxWidth: 130 },
-    {
-      field: 'created_at',
-      headerName: 'Time',
-      valueFormatter: ({ value }) => typeof value === 'string' ? new Date(value).toLocaleString() : 'Just now',
-      minWidth: 190,
-    },
-    {
-      headerName: 'Details',
-      valueGetter: ({ data }) => data ? JSON.stringify(data.details) : '',
-      minWidth: 190,
-    },
-  ];
-
   return (
     <>
       <div className="breadcrumb"><Link to="/client">Agreements</Link><span>/</span><span>{agreement.title}</span></div>
@@ -122,13 +105,7 @@ function ClientAgreementDetail() {
         </div>
         <StatusBadge status={agreement.status} />
       </div>
-      <NextStep>
-        {agreement.milestones.some((item) => item.status === 'IN_REVIEW')
-          ? 'Review the submitted evidence, then approve it yourself or request a revision.'
-          : hasPendingPayment
-            ? 'Waiting for PayPal payment confirmation. This page checks for updates automatically.'
-            : 'Follow the project milestones below. Only your approval can move a deliverable to payment.'}
-      </NextStep>
+      <NextStep>{agreementNextStep(agreement, 'client')}</NextStep>
       {error && <div className="alert alert-error" role="alert">{error} <button type="button" className="text-button" onClick={() => void load()}>Retry</button></div>}
 
       <MilestoneTracker milestones={agreement.milestones} />
@@ -197,8 +174,8 @@ function ClientAgreementDetail() {
                     </div>
                     {milestone.invoices[0].status === 'PAID' ? (
                       audit.some((entry) => entry.action === 'paypal_invoice_status_updated' && entry.entity_id === milestone.invoices[0].id && entry.details.status === 'PAID')
-                        ? <div className="webhook-confirmed"><span aria-hidden="true">✓</span> Confirmed by PayPal webhook</div>
-                        : <div className="webhook-confirmed"><span aria-hidden="true">✓</span> Confirmed by PayPal</div>
+                            ? <div className="webhook-confirmed" role="status" aria-live="polite"><span aria-hidden="true">✓</span><span><strong>Payment confirmed by PayPal webhook</strong><small>Milestone marked paid · event traced in activity</small></span></div>
+                            : <div className="webhook-confirmed" role="status"><span aria-hidden="true">✓</span><span><strong>Payment confirmed by PayPal</strong><small>Milestone marked paid</small></span></div>
                     ) : milestone.invoices[0].status === 'SENT' && demoMode === 'mock' ? (
                       <button type="button" className="button button-secondary" disabled={busy !== ''} onClick={() => void act(`sync-${milestone.id}`, () => api.syncInvoice(user.id, milestone.invoices[0].id))}>
                         Simulate mock payment
@@ -233,7 +210,25 @@ function ClientAgreementDetail() {
         <aside className="card section-card audit-card">
           <div className="section-heading"><div><p className="eyebrow">TRACEABILITY</p><h2>Activity</h2></div><span className="audit-count">{audit.length}</span></div>
           {audit.length === 0 ? <p className="muted">No activity recorded yet.</p> : (
-            <DataGrid rows={audit.slice().reverse()} columns={auditColumns} label="Agreement audit trail" />
+            <ol className="activity-list" aria-label="Agreement activity">
+              {audit.slice().reverse().map((entry) => {
+                const description = activityDescription(entry);
+                return (
+                  <li className="activity-entry" key={entry.id}>
+                    <span className={`activity-dot actor-icon actor-icon-${description.actor.toLowerCase()}`} aria-hidden="true">
+                      {description.actor === 'Provider' ? 'P' : description.actor === 'Client' ? 'C' : description.actor === 'AI' ? 'AI' : 'PP'}
+                    </span>
+                    <div className="activity-copy">
+                      <strong>{description.message}</strong>
+                      <span>{description.actor}</span>
+                    </div>
+                    <time dateTime={entry.created_at ?? undefined}>
+                      {entry.created_at ? new Date(entry.created_at).toLocaleString() : 'Just now'}
+                    </time>
+                  </li>
+                );
+              })}
+            </ol>
           )}
         </aside>
       </section>

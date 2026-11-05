@@ -6,11 +6,13 @@ import NewAgreementWizard from './pages/client/NewAgreementWizard';
 import ClientAgreementDetail from './pages/client/ClientAgreementDetail';
 import ProviderDashboard from './pages/provider/ProviderDashboard';
 import ProviderAgreementDetail from './pages/provider/ProviderAgreementDetail';
+import LandingPage from './pages/LandingPage';
 
 function App() {
   return (
     <RoleProvider>
       <Routes>
+        <Route path="/" element={<LandingPage />} />
         <Route element={<Layout />}>
           {/* Client Routes */}
           <Route path="/client" element={<ClientDashboard />} />
@@ -22,7 +24,6 @@ function App() {
           <Route path="/provider/agreements/:id" element={<ProviderAgreementDetail />} />
 
           {/* Default redirect */}
-          <Route path="/" element={<Navigate to="/client" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

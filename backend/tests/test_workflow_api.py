@@ -115,6 +115,119 @@ def test_demo_seed_protects_reset_endpoint(api_client):
     assert response.status_code == 401
 
 
+def test_demo_reset_removes_other_demo_agreements_and_restores_clean_seed(api_client):
+    settings = Settings(
+        DEMO_MODE="mock",
+        DEMO_SEED_TOKEN="",
+    )
+    api_client.app.dependency_overrides[get_settings] = lambda: settings
+    seeded = api_client.post("/api/v1/demo/seed").json()
+    client_headers = _headers(seeded["client_user_id"])
+    extra_intent = {**INTENT, "project_type": "Temporary Demo Agreement"}
+    extra = api_client.post(
+        "/api/v1/client/agreements",
+        headers=client_headers,
+        json={"intent": extra_intent},
+    )
+    assert extra.status_code == 201
+
+    reset = api_client.post(
+        "/api/v1/demo/seed",
+        headers=client_headers,
+    )
+
+    assert reset.status_code == 200
+    agreements = api_client.get(
+        "/api/v1/client/agreements",
+        headers=_headers(reset.json()["client_user_id"]),
+    ).json()
+    assert len(agreements) == 1
+    assert agreements[0]["id"] == reset.json()["agreement_id"]
+    assert agreements[0]["title"] == "E-commerce website"
+    assert not any(
+        milestone["evidence"] or milestone["invoices"]
+        for milestone in agreements[0]["milestones"]
+    )
+
+
+def test_demo_seed_has_verifiable_acceptance_criteria(api_client):
+    seeded = _setup_demo(api_client, MockProvider([]), FakePaypal())
+    agreement = api_client.get(
+        f"/api/v1/client/agreements/{seeded['agreement_id']}",
+        headers=_headers(seeded["client_user_id"]),
+    ).json()
+
+    assert set(agreement["milestones"][0]["acceptance_criteria"]) == {
+        "Mockups for the Home, Catalog, Product, Cart, and Account pages are included in the submitted files.",
+        "A style guide is included in the submitted files.",
+    }
+    assert set(agreement["milestones"][1]["acceptance_criteria"]) == {
+        "A public HTTPS staging URL is provided and returns HTTP 2xx.",
+        "The staging layout is responsive at mobile (375 px) and desktop (1280 px) widths.",
+    }
+    assert set(agreement["milestones"][2]["acceptance_criteria"]) == {
+        "A project documentation file is included in the handover package.",
+        "A source repository URL is provided and returns HTTP 2xx.",
+    }
+
+
+def test_mock_mode_evidence_loop_produces_partial_then_sufficient_advisory(api_client):
+    api_client.app.dependency_overrides[get_settings] = lambda: Settings(
+        DEMO_MODE="mock",
+        DEMO_SEED_TOKEN="",
+    )
+    demo = api_client.post("/api/v1/demo/seed").json()
+    provider_headers = _headers(demo["provider_user_id"])
+    agreement_id = demo["agreement_id"]
+    milestone_id = demo["milestone_ids"][0]
+    path = (
+        f"/api/v1/provider/agreements/{agreement_id}"
+        f"/milestones/{milestone_id}"
+    )
+    assert api_client.post(
+        f"/api/v1/provider/agreements/{agreement_id}/accept",
+        headers=provider_headers,
+    ).status_code == 200
+    assert api_client.post(f"{path}/start", headers=provider_headers).status_code == 200
+
+    partial = api_client.post(
+        f"{path}/evidence",
+        headers=provider_headers,
+        json={
+            "text": (
+                "Mockups for the Home, Catalog, Product, and Account pages are "
+                "included in the submitted files. A style guide is included in "
+                "the submitted files."
+            )
+        },
+    )
+    complete = api_client.post(
+        f"{path}/evidence",
+        headers=provider_headers,
+        json={
+            "text": (
+                "Mockups for the Home, Catalog, Product, Cart, and Account pages "
+                "are included in the submitted files. A style guide is included "
+                "in the submitted files."
+            )
+        },
+    )
+
+    assert partial.status_code == complete.status_code == 200
+    assert partial.json()["ai_report"]["overall_verdict"] == "partial"
+    assert complete.json()["ai_report"]["overall_verdict"] == "sufficient"
+    audit = api_client.get(
+        f"/api/v1/agreements/{agreement_id}/audit-logs",
+        headers=provider_headers,
+    )
+    assert audit.status_code == 200
+    advisory_events = [
+        item for item in audit.json() if item["action"] == "ai_advisory_generated"
+    ]
+    assert len(advisory_events) == 2
+    assert all(item["user_id"] is None for item in advisory_events)
+
+
 def test_mock_mode_seeds_and_completes_demo_without_external_credentials(api_client):
     settings = Settings(DEMO_MODE="mock", DEMO_SEED_TOKEN="")
     api_client.app.dependency_overrides[get_settings] = lambda: settings
@@ -255,6 +368,7 @@ def test_full_demo_flow_uses_human_approval_and_sequential_payments(
         json={"intent": parsed.json()},
     )
     assert created.status_code == 201
+    assert created.json()["title"] == parsed.json()["project_type"]
     agreement_id = created.json()["id"]
     assert api_client.post(
         f"/api/v1/client/agreements/{agreement_id}/publish",
