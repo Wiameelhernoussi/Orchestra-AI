@@ -1,7 +1,27 @@
+import { useMemo, useState } from 'react';
 import { formatMoney, type Agreement, type Role } from '../api';
 import { StatusBadge } from './StatusBadge';
 import { agreementAction } from '../presentation';
 import { Link } from 'react-router-dom';
+
+type AgreementFilter = 'all' | 'needs-action' | 'waiting' | 'paid';
+
+export function agreementFilterBucket(
+  agreement: Agreement,
+  role: Role,
+): Exclude<AgreementFilter, 'all'> {
+  if (
+    agreement.status === 'COMPLETED'
+    || (agreement.milestones.length > 0 && agreement.milestones.every((item) => item.status === 'PAID'))
+  ) return 'paid';
+  if (agreement.status === 'REJECTED' || agreement.status === 'CANCELLED') return 'waiting';
+
+  const action = agreementAction(agreement, role);
+  const needsAction = role === 'client'
+    ? ['Review evidence', 'Pay invoice'].includes(action)
+    : ['Review proposal', 'Submit evidence', 'Start milestone'].includes(action);
+  return needsAction ? 'needs-action' : 'waiting';
+}
 
 export function AgreementCards({
   agreements,
@@ -11,10 +31,50 @@ export function AgreementCards({
   role: Role;
 }) {
   const basePath = role === 'client' ? '/client' : '/provider';
+  const [filter, setFilter] = useState<AgreementFilter>('all');
+  const counts = useMemo(() => ({
+    'needs-action': agreements.filter((item) => agreementFilterBucket(item, role) === 'needs-action').length,
+    waiting: agreements.filter((item) => agreementFilterBucket(item, role) === 'waiting').length,
+    paid: agreements.filter((item) => agreementFilterBucket(item, role) === 'paid').length,
+  }), [agreements, role]);
+  const visibleAgreements = useMemo(
+    () => agreements
+      .filter((item) => filter === 'all' || agreementFilterBucket(item, role) === filter)
+      .slice()
+      .sort((left, right) => {
+        const order: Record<Exclude<AgreementFilter, 'all'>, number> = {
+          'needs-action': 0,
+          waiting: 1,
+          paid: 2,
+        };
+        return order[agreementFilterBucket(left, role)] - order[agreementFilterBucket(right, role)];
+      }),
+    [agreements, filter, role],
+  );
+  const filters: { id: AgreementFilter; label: string; count?: number }[] = [
+    { id: 'all', label: 'All' },
+    { id: 'needs-action', label: 'Needs my action', count: counts['needs-action'] },
+    { id: 'waiting', label: 'Waiting', count: counts.waiting },
+    { id: 'paid', label: 'Paid', count: counts.paid },
+  ];
 
   return (
-    <div className="agreement-grid">
-      {agreements.map((agreement) => {
+    <>
+      <div className="agreement-filters" role="group" aria-label="Filter agreements">
+        {filters.map((item) => (
+          <button
+            type="button"
+            className={filter === item.id ? 'agreement-filter-chip selected' : 'agreement-filter-chip'}
+            aria-pressed={filter === item.id}
+            key={item.id}
+            onClick={() => setFilter(item.id)}
+          >
+            {item.label}{item.count !== undefined ? ` · ${item.count}` : ''}
+          </button>
+        ))}
+      </div>
+      <div className="agreement-grid">
+      {visibleAgreements.map((agreement) => {
         const paid = agreement.milestones.filter((item) => item.status === 'PAID');
         const paidCents = paid.reduce((sum, item) => sum + item.amount_cents, 0);
         const action = agreementAction(agreement, role);
@@ -61,6 +121,10 @@ export function AgreementCards({
           </Link>
         );
       })}
-    </div>
+      </div>
+      {visibleAgreements.length === 0 && (
+        <p className="agreement-filter-empty" role="status">No agreements in this filter.</p>
+      )}
+    </>
   );
 }

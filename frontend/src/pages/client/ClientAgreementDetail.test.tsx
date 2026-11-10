@@ -155,6 +155,7 @@ describe('ClientAgreementDetail', () => {
     expect(approveButton).toHaveAttribute('aria-describedby', 'approval-blocker-milestone-1');
     expect(screen.getByText(/AI advice does not decide approval/i)).toBeInTheDocument();
     expect(screen.getAllByText(criterion).length).toBeGreaterThan(1);
+    fireEvent.click(screen.getByText('Deterministic link checks · 1'));
     expect(screen.getByText('Inaccessible to automated checker')).toBeInTheDocument();
 
     fireEvent.click(approveButton);

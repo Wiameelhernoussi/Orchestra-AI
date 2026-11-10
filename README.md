@@ -92,6 +92,20 @@ action; it does not represent a PayPal transaction.
 The frontend container runs `npm ci` on startup so its persistent dependency
 volume stays synchronized with `frontend/package-lock.json`.
 
+### Demo roles and two-tab walkthrough
+
+The landing page has separate **I'm a client** and **I'm a provider** entry
+cards. Each opens only its matching workspace; trying to open a client route as
+the provider (or vice versa) returns to role selection. The selected demo role
+is stored in that browser tab's `sessionStorage`, not in a shared preference.
+
+Use the **Demo tools** menu to reset the sample agreement or open the other
+role in a new tab. For a side-by-side walkthrough, enter as the client in the
+first tab, choose **Demo tools → Open the provider role in a new tab**, then
+work through the same shared agreement from each role. The account menu signs
+out of the current tab's demo role and asks for confirmation. The Mock-mode
+banner remains visible whenever simulated payments are active.
+
 To stop the app, press `Ctrl+C` or run `docker compose down`. The database
 volume is retained unless explicitly removed.
 

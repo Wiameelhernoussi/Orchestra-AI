@@ -1,7 +1,8 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import { useLocation } from 'react-router-dom';
 import { api } from '../api';
 
-type Role = 'client' | 'provider';
+export type Role = 'client' | 'provider';
 
 interface UserInfo {
   id: string;
@@ -26,21 +27,37 @@ const DEMO_USERS: Record<Role, UserInfo> = {
 };
 
 interface RoleContextType {
-  role: Role;
+  role: Role | null;
   user: UserInfo;
-  setRole: (role: Role) => void;
+  setRole: (role: Role | null) => void;
   demoMode: 'mock' | 'real' | 'loading' | 'unavailable';
   demoModeError: string;
 }
 
 const RoleContext = createContext<RoleContextType | null>(null);
 
+function storedRole(search: string): Role | null {
+  const queryRole = new URLSearchParams(search).get('demoRole');
+  if (queryRole === 'client' || queryRole === 'provider') return queryRole;
+  const role = window.sessionStorage.getItem('orchestra.demo.role');
+  return role === 'client' || role === 'provider' ? role : null;
+}
+
 export function RoleProvider({ children }: { children: ReactNode }) {
-  const [role, setRole] = useState<Role>(() =>
-    window.location.pathname.startsWith('/provider') ? 'provider' : 'client',
-  );
+  const location = useLocation();
+  const [role, setRoleState] = useState<Role | null>(() => storedRole(location.search));
   const [demoMode, setDemoMode] = useState<'mock' | 'real' | 'loading' | 'unavailable'>('loading');
   const [demoModeError, setDemoModeError] = useState('');
+
+  useEffect(() => {
+    if (role) window.sessionStorage.setItem('orchestra.demo.role', role);
+  }, [role]);
+
+  const setRole = useCallback((nextRole: Role | null) => {
+    if (nextRole) window.sessionStorage.setItem('orchestra.demo.role', nextRole);
+    else window.sessionStorage.removeItem('orchestra.demo.role');
+    setRoleState(nextRole);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -61,7 +78,7 @@ export function RoleProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <RoleContext.Provider value={{ role, user: DEMO_USERS[role], setRole, demoMode, demoModeError }}>
+    <RoleContext.Provider value={{ role, user: DEMO_USERS[role ?? 'client'], setRole, demoMode, demoModeError }}>
       {children}
     </RoleContext.Provider>
   );

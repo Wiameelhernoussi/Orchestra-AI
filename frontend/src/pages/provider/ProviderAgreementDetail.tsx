@@ -2,14 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, formatMoney, parseEvidenceContent, type Agreement, type AuditEntry } from '../../api';
 import { AdvisoryCard } from '../../components/AdvisoryCard';
+import { AgreementSummaryStrip, MilestoneRail } from '../../components/AgreementWorkspaceNavigation';
 import { EvidenceAttachments } from '../../components/EvidenceAttachments';
-import { MilestoneTracker } from '../../components/MilestoneTracker';
-import { NextStep } from '../../components/NextStep';
 import { StatusBadge } from '../../components/StatusBadge';
 import { useRole } from '../../context/RoleContext';
 import { InvoiceTable } from '../../components/InvoiceTable';
 import { PaymentReadinessPanel } from '../../components/PaymentReadinessPanel';
 import {
+  activityDescription,
   agreementNextStep,
   DESIGN_SAMPLE_PARTIAL,
   DESIGN_SAMPLE_SUFFICIENT,
@@ -28,6 +28,7 @@ function ProviderAgreementDetail() {
   const [evidenceFiles, setEvidenceFiles] = useState<Record<string, File[]>>({});
   const [evidenceCriteria, setEvidenceCriteria] = useState<Record<string, string[]>>({});
   const [revisionNote, setRevisionNote] = useState('');
+  const [selectedMilestoneId, setSelectedMilestoneId] = useState('');
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -99,21 +100,25 @@ function ProviderAgreementDetail() {
 
   if (loading) return <div className="loading-panel"><span className="spinner" /> Loading agreement…</div>;
   if (!agreement) return <div className="alert alert-error" role="alert">{error || 'Agreement not found.'} <Link to="/provider">Back to work</Link></div>;
+  const activeMilestone = agreement.milestones.find((item) => item.id === selectedMilestoneId)
+    ?? agreement.milestones.find((item) => item.status === 'IN_PROGRESS' || item.status === 'REVISION_REQUESTED')
+    ?? agreement.milestones.find((item) => item.status !== 'PAID')
+    ?? agreement.milestones[0];
 
   return (
     <>
       <div className="breadcrumb"><Link to="/provider">My work</Link><span>/</span><span>{agreement.title}</span></div>
       <div className="page-heading detail-heading">
-        <div><p className="eyebrow">PROVIDER AGREEMENT</p><h1>{agreement.title}</h1><p className="page-subtitle">{formatMoney(agreement.total_amount_cents)} total · {agreement.milestones.length} milestones</p></div>
+        <div><p className="eyebrow">PROVIDER AGREEMENT</p><h1>{agreement.title}</h1><p className="page-subtitle">{agreement.milestones.length} milestones</p></div>
         <StatusBadge status={agreement.status} />
       </div>
-      <NextStep>{agreementNextStep(agreement, 'provider')}</NextStep>
+      <AgreementSummaryStrip agreement={agreement} role="provider" nextAction={agreementNextStep(agreement, 'provider')} />
       {error && <div className="alert alert-error" role="alert">{error} <button type="button" className="text-button" onClick={() => void load()}>Retry</button></div>}
 
       {agreement.status === 'PROPOSED' && (
         <section className="card proposal-actions">
           <div><p className="eyebrow">CLIENT PROPOSAL</p><h2>Review the agreement</h2><p className="muted">Accept to activate the project, or decline with an optional note.</p></div>
-          <div className="form-actions">
+          <div className="form-actions sticky-action-bar">
             <button type="button" className="button button-secondary" disabled={busy !== ''} onClick={() => void act('refuse', () => api.refuseAgreement(user.id, agreement.id, revisionNote))}>{busy === 'refuse' ? 'Declining…' : 'Decline proposal'}</button>
             <button type="button" className="button button-primary" disabled={busy !== ''} onClick={() => void act('accept', () => api.acceptAgreement(user.id, agreement.id))}>{busy === 'accept' ? 'Accepting…' : 'Accept agreement'}</button>
           </div>
@@ -121,13 +126,10 @@ function ProviderAgreementDetail() {
         </section>
       )}
 
-      <MilestoneTracker milestones={agreement.milestones} />
-      <section className="card section-card">
-        <div className="section-heading"><div><p className="eyebrow">PAYMENT RECORD</p><h2>Invoices</h2></div></div>
-        <InvoiceTable agreement={agreement} />
-      </section>
-      <section className="provider-milestones">
-        {agreement.milestones.map((milestone) => (
+      <div className="agreement-detail-workspace">
+        <MilestoneRail agreement={agreement} selectedId={activeMilestone?.id ?? ''} onSelect={setSelectedMilestoneId} />
+        <section className="provider-milestones">
+        {agreement.milestones.filter((item) => item.id === activeMilestone?.id).map((milestone) => (
           <article className="card section-card provider-milestone-card" key={milestone.id}>
             <div className="section-heading">
               <div><p className="eyebrow">MILESTONE {String(milestone.order).padStart(2, '0')} · {formatMoney(milestone.amount_cents)}</p><h2>{milestone.title}</h2></div>
@@ -138,7 +140,7 @@ function ProviderAgreementDetail() {
             <PaymentReadinessPanel milestone={milestone} role="provider" />
 
             {milestone.status === 'PENDING' || milestone.status === 'REVISION_REQUESTED' ? (
-              <div className="provider-action-row">
+              <div className="provider-action-row sticky-action-bar">
                 <p className="muted">{milestone.order > 1 ? 'Previous milestone must be paid before this work can start.' : 'Ready when you are.'}</p>
                 <button type="button" className="button button-primary" disabled={busy !== '' || (milestone.order > 1 && agreement.milestones[milestone.order - 2]?.status !== 'PAID')} onClick={() => void act(`start-${milestone.id}`, () => api.startMilestone(user.id, agreement.id, milestone.id))}>
                   {busy === `start-${milestone.id}` ? 'Starting…' : 'Start milestone'}
@@ -212,7 +214,7 @@ function ProviderAgreementDetail() {
                     Selected: {(evidenceFiles[milestone.id] ?? []).map((file) => file.name).join(', ')}
                   </p>
                 )}
-                <div className="form-actions">
+                <div className="form-actions sticky-action-bar">
                   <button type="button" className="button button-secondary" disabled={busy !== '' || !(evidenceText[milestone.id] ?? '').trim()} onClick={() => void submitEvidence(milestone.id)}>
                     {busy === `evidence-${milestone.id}` ? <><span className="spinner" /> Uploading & assessing…</> : 'Submit evidence'}
                   </button>
@@ -273,7 +275,31 @@ function ProviderAgreementDetail() {
             )}
           </article>
         ))}
-      </section>
+        </section>
+      </div>
+      <details className="secondary-detail-accordion card section-card">
+        <summary>Payment record and invoices</summary>
+        <InvoiceTable agreement={agreement} />
+      </details>
+      <details className="secondary-detail-accordion card section-card">
+        <summary>Activity · {audit.length} events</summary>
+        {audit.length === 0 ? <p className="muted">No activity recorded yet.</p> : (
+          <ol className="activity-list" aria-label="Agreement activity">
+            {audit.slice().reverse().map((entry) => {
+              const description = activityDescription(entry);
+              return (
+                <li className="activity-entry" key={entry.id}>
+                  <span className={`activity-dot actor-icon actor-icon-${description.actor.toLowerCase()}`} aria-hidden="true">
+                    {description.actor === 'Provider' ? 'P' : description.actor === 'Client' ? 'C' : description.actor === 'AI' ? 'AI' : 'PP'}
+                  </span>
+                  <div className="activity-copy"><strong>{description.message}</strong><span>{description.actor}</span></div>
+                  <time dateTime={entry.created_at ?? undefined}>{entry.created_at ? new Date(entry.created_at).toLocaleString() : 'Just now'}</time>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </details>
     </>
   );
 }

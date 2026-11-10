@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, Navigate, useLocation } from 'react-router-dom';
 import { useRole } from '../context/RoleContext';
 import { PermissionMatrix } from '../components/PermissionMatrix';
 
@@ -11,7 +11,10 @@ const STEPS = [
 ];
 
 function LandingPage() {
-  const { setRole } = useRole();
+  const { role, setRole } = useRole();
+  const location = useLocation();
+  const chooseRoleMessage = (location.state as { chooseRoleMessage?: string } | null)?.chooseRoleMessage;
+  if (role) return <Navigate to={role === 'client' ? '/client' : '/provider'} replace />;
   return (
     <div className="landing-page">
       <header className="landing-header">
@@ -26,6 +29,7 @@ function LandingPage() {
         <section className="landing-hero">
           <div className="hero-grid">
             <div className="hero-copy">
+              {chooseRoleMessage && <p className="choose-role-message" role="status">{chooseRoleMessage}</p>}
               <p className="landing-eyebrow"><span /> A clearer way to work together</p>
               <h1>Agree.<br /><span>Verify.</span> Pay.</h1>
               <p className="hero-value">
@@ -33,11 +37,13 @@ function LandingPage() {
                 human approval, and a PayPal invoice.
               </p>
               <div className="hero-actions">
-                <Link className="landing-cta landing-cta-client" to="/client" onClick={() => setRole('client')}>
-                  Try as Client <span aria-hidden="true">↗</span>
+                <Link className="landing-cta landing-cta-client role-entry-card" to="/client" onClick={() => setRole('client')}>
+                  <span><strong>I'm a client</strong><small>Build agreements, review work, and approve payment.</small></span>
+                  <span aria-hidden="true">↗</span>
                 </Link>
-                <Link className="landing-cta landing-cta-provider" to="/provider" onClick={() => setRole('provider')}>
-                  Try as Provider <span aria-hidden="true">↗</span>
+                <Link className="landing-cta landing-cta-provider role-entry-card" to="/provider" onClick={() => setRole('provider')}>
+                  <span><strong>I'm a provider</strong><small>Accept work, submit evidence, and track payment.</small></span>
+                  <span aria-hidden="true">↗</span>
                 </Link>
               </div>
               <p className="hero-note">Interactive prototype · PayPal Sandbox · No real funds</p>
@@ -142,8 +148,8 @@ function LandingPage() {
         <section className="landing-final-cta">
           <div><p className="landing-eyebrow">START WITH YOUR SIDE OF THE STORY</p><h2>Make the next project clearer.</h2></div>
           <div className="hero-actions">
-            <Link className="landing-cta landing-cta-client" to="/client" onClick={() => setRole('client')}>Try as Client <span aria-hidden="true">↗</span></Link>
-            <Link className="landing-cta landing-cta-provider" to="/provider" onClick={() => setRole('provider')}>Try as Provider <span aria-hidden="true">↗</span></Link>
+            <Link className="landing-cta landing-cta-client" to="/client" onClick={() => setRole('client')}>I'm a client <span aria-hidden="true">↗</span></Link>
+            <Link className="landing-cta landing-cta-provider" to="/provider" onClick={() => setRole('provider')}>I'm a provider <span aria-hidden="true">↗</span></Link>
           </div>
         </section>
       </main>

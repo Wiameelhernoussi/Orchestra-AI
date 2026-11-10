@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AdvisoryCard } from './AdvisoryCard';
 
@@ -35,6 +35,7 @@ describe('AdvisoryCard', () => {
       />,
     );
 
+    fireEvent.click(screen.getByText('Image observations · advisory only'));
     expect(screen.getByText('home-page.png')).toBeInTheDocument();
     expect(screen.getByText('Analyzed')).toBeInTheDocument();
     expect(screen.getByText(/Home page mockup is included · visible in image/i)).toBeInTheDocument();
@@ -70,6 +71,7 @@ describe('AdvisoryCard', () => {
       />,
     );
 
+    fireEvent.click(screen.getByText('Image observations · advisory only'));
     expect(screen.getByText('Image not analyzed.')).toBeInTheDocument();
     expect(screen.getByText('design.png')).toBeInTheDocument();
     expect(screen.getByText(/Mobile design is included · cannot tell/i)).toBeInTheDocument();
@@ -121,6 +123,7 @@ describe('AdvisoryCard', () => {
       />,
     );
 
+    fireEvent.click(screen.getByText('Deterministic link checks · 2'));
     expect(screen.getByText('AI advisory only. Human approval required.')).toBeInTheDocument();
     expect(screen.getByText('partial')).toBeInTheDocument();
     expect(screen.getByText('✓ Verified')).toBeInTheDocument();

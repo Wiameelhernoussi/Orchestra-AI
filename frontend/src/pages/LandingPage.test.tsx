@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { api } from '../api';
@@ -8,7 +8,11 @@ import { RoleProvider } from '../context/RoleContext';
 import LandingPage from './LandingPage';
 
 describe('LandingPage', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    cleanup();
+    window.sessionStorage.clear();
+    vi.restoreAllMocks();
+  });
 
   it('presents the promise, workflow, trust model, sandbox disclosure, and both entry points', () => {
     vi.spyOn(api, 'health').mockResolvedValue({ demo_mode: 'mock' });
@@ -30,8 +34,8 @@ describe('LandingPage', () => {
     expect(screen.getByRole('table', { name: /permission matrix/i })).toBeTruthy();
     expect(screen.getByText('Creates after recorded client approval')).toBeTruthy();
     expect(screen.getByText(/AI never approves work, creates invoices, or confirms payment/)).toBeTruthy();
-    expect(screen.getAllByRole('link', { name: /Try as Client/ })[0]).toHaveAttribute('href', '/client');
-    expect(screen.getAllByRole('link', { name: /Try as Provider/ })[0]).toHaveAttribute('href', '/provider');
+    expect(screen.getAllByRole('link', { name: /I'm a client/ })[0]).toHaveAttribute('href', '/client');
+    expect(screen.getAllByRole('link', { name: /I'm a provider/ })[0]).toHaveAttribute('href', '/provider');
     expect(screen.getByText(/From intent to agreement\. From evidence to approval\./)).toBeTruthy();
   });
 });

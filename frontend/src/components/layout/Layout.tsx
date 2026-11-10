@@ -1,20 +1,15 @@
-import { useEffect, useState } from 'react';
-import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { useRole } from '../../context/RoleContext';
 
 function Layout() {
   const { role, user, setRole, demoMode, demoModeError } = useRole();
   const navigate = useNavigate();
-  const location = useLocation();
   const [resetting, setResetting] = useState(false);
   const [resetError, setResetError] = useState('');
   const isClient = role === 'client';
-
-  useEffect(() => {
-    if (location.pathname.startsWith('/client') && role !== 'client') setRole('client');
-    if (location.pathname.startsWith('/provider') && role !== 'provider') setRole('provider');
-  }, [location.pathname, role, setRole]);
+  const activeRole = role ?? 'client';
 
   async function resetDemo() {
     if (!window.confirm('Reset the demo agreements and return to the sample $600 project?')) {
@@ -24,7 +19,7 @@ function Layout() {
     setResetError('');
     try {
       await api.resetDemo();
-      navigate('/client');
+      navigate(activeRole === 'client' ? '/client' : '/provider');
       window.location.reload();
     } catch (error) {
       setResetError(error instanceof Error ? error.message : 'Demo reset failed.');
@@ -33,9 +28,16 @@ function Layout() {
     }
   }
 
-  function chooseRole(nextRole: 'client' | 'provider') {
-    setRole(nextRole);
-    navigate(nextRole === 'client' ? '/client' : '/provider');
+  function signOut() {
+    if (!window.confirm('Sign out of this demo account?')) return;
+    setRole(null);
+    navigate('/', { state: { chooseRoleMessage: 'Choose your role to enter a workspace.' } });
+  }
+
+  function openOtherRole() {
+    const otherRole = activeRole === 'client' ? 'provider' : 'client';
+    const route = otherRole === 'client' ? '/client' : '/provider';
+    window.open(`${route}?demoRole=${otherRole}`, '_blank', 'noopener,noreferrer');
   }
 
   const navLinks = isClient
@@ -46,7 +48,7 @@ function Layout() {
     : [{ to: '/provider', label: 'My work', end: true }];
 
   return (
-    <div className={`app-shell role-${role}`}>
+    <div className={`app-shell role-${activeRole}`}>
       <header className="topbar">
         <div className="topbar-main">
           <div className="brand-group">
@@ -59,33 +61,24 @@ function Layout() {
             </p>
           </div>
           <div className="topbar-actions">
-            <div className="role-switcher" role="group" aria-label="Choose demo role">
-              <button
-                type="button"
-                className={isClient ? 'role-option selected' : 'role-option'}
-                aria-pressed={isClient}
-                onClick={() => chooseRole('client')}
-              >
-                Client
-              </button>
-              <button
-                type="button"
-                className={!isClient ? 'role-option selected' : 'role-option'}
-                aria-pressed={!isClient}
-                onClick={() => chooseRole('provider')}
-              >
-                Provider
-              </button>
-            </div>
-            <button
-              type="button"
-              className="button button-quiet reset-button"
-              onClick={resetDemo}
-              disabled={resetting}
-            >
-              {resetting ? <span className="spinner" /> : <span aria-hidden="true">↻</span>}
-              {resetting ? 'Resetting…' : 'Reset demo'}
-            </button>
+            <details className="topbar-menu">
+              <summary>Demo tools</summary>
+              <div className="topbar-menu-panel">
+                <button type="button" onClick={resetDemo} disabled={resetting}>
+                  {resetting ? 'Resetting…' : 'Reset demo'}
+                </button>
+                <button type="button" onClick={openOtherRole}>
+                  Open the {isClient ? 'provider' : 'client'} role in a new tab
+                </button>
+              </div>
+            </details>
+            <details className="topbar-menu account-menu">
+              <summary>{user.name} ▾</summary>
+              <div className="topbar-menu-panel">
+                <span>{user.orgName}</span>
+                <button type="button" onClick={signOut}>Sign out of demo account</button>
+              </div>
+            </details>
           </div>
         </div>
         <div className="topbar-sub">
@@ -102,7 +95,7 @@ function Layout() {
             ))}
           </nav>
           <div className="session-identity">
-            <span className={`avatar avatar-${role}`} aria-hidden="true">{isClient ? 'SC' : 'DS'}</span>
+            <span className={`avatar avatar-${activeRole}`} aria-hidden="true">{isClient ? 'SC' : 'DS'}</span>
             <span>
               <strong>{user.orgName}</strong>
               <small>{isClient ? 'Client workspace' : 'Provider workspace'}</small>

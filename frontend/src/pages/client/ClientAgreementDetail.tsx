@@ -2,9 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, formatMoney, parseEvidenceContent, type Agreement, type AuditEntry } from '../../api';
 import { AdvisoryCard } from '../../components/AdvisoryCard';
+import { AgreementSummaryStrip, MilestoneRail } from '../../components/AgreementWorkspaceNavigation';
 import { EvidenceAttachments } from '../../components/EvidenceAttachments';
-import { MilestoneTracker } from '../../components/MilestoneTracker';
-import { NextStep } from '../../components/NextStep';
 import { StatusBadge } from '../../components/StatusBadge';
 import { useRole } from '../../context/RoleContext';
 import { InvoiceTable } from '../../components/InvoiceTable';
@@ -22,6 +21,7 @@ function ClientAgreementDetail() {
   const [revisionNotes, setRevisionNotes] = useState<Record<string, string>>({});
   const [approvalConfirmation, setApprovalConfirmation] = useState<string | null>(null);
   const [approvalAcknowledged, setApprovalAcknowledged] = useState(false);
+  const [selectedMilestoneId, setSelectedMilestoneId] = useState('');
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -101,7 +101,10 @@ function ClientAgreementDetail() {
   if (!agreement) {
     return <div className="alert alert-error" role="alert">{error || 'Agreement not found.'} <Link to="/client">Back to agreements</Link></div>;
   }
-  const paidTotal = agreement.milestones.filter((item) => item.status === 'PAID').reduce((sum, item) => sum + item.amount_cents, 0);
+  const activeMilestone = agreement.milestones.find((item) => item.id === selectedMilestoneId)
+    ?? agreement.milestones.find((item) => item.status === 'IN_REVIEW')
+    ?? agreement.milestones.find((item) => item.status !== 'PAID')
+    ?? agreement.milestones[0];
   return (
     <>
       <div className="breadcrumb"><Link to="/client">Agreements</Link><span>/</span><span>{agreement.title}</span></div>
@@ -109,22 +112,17 @@ function ClientAgreementDetail() {
         <div>
           <p className="eyebrow">CLIENT AGREEMENT</p>
           <h1>{agreement.title}</h1>
-          <p className="page-subtitle">{formatMoney(paidTotal)} paid of {formatMoney(agreement.total_amount_cents)} · {agreement.milestones.length} milestones</p>
+          <p className="page-subtitle">{agreement.milestones.length} milestones</p>
         </div>
         <StatusBadge status={agreement.status} />
       </div>
-      <NextStep>{agreementNextStep(agreement, 'client')}</NextStep>
+      <AgreementSummaryStrip agreement={agreement} role="client" nextAction={agreementNextStep(agreement, 'client')} />
       {error && <div className="alert alert-error" role="alert">{error} <button type="button" className="text-button" onClick={() => void load()}>Retry</button></div>}
 
-      <MilestoneTracker milestones={agreement.milestones} />
-      <section className="card section-card">
-        <div className="section-heading"><div><p className="eyebrow">PAYMENT RECORD</p><h2>Invoices</h2></div></div>
-        <InvoiceTable agreement={agreement} />
-      </section>
-
-      <section className="detail-sections">
-        <div className="detail-main-column">
-          {agreement.milestones.map((milestone) => (
+      <div className="agreement-detail-workspace">
+        <MilestoneRail agreement={agreement} selectedId={activeMilestone?.id ?? ''} onSelect={setSelectedMilestoneId} />
+        <section className="agreement-detail-content">
+          {agreement.milestones.filter((item) => item.id === activeMilestone?.id).map((milestone) => (
             <section className="card section-card" key={milestone.id}>
               <div className="section-heading">
                 <div><p className="eyebrow">MILESTONE {String(milestone.order).padStart(2, '0')}</p><h2>{milestone.title}</h2></div>
@@ -208,7 +206,7 @@ function ClientAgreementDetail() {
                       </div>
                     );
                   })()}
-                  <div className="form-actions">
+                  <div className="form-actions sticky-action-bar">
                     <button className="button button-secondary" disabled={busy !== ''} onClick={() => void act(`revision-${milestone.id}`, () => api.requestRevision(user.id, agreement.id, milestone.id, revisionNotes[milestone.id] ?? milestone.evidence[milestone.evidence.length - 1]?.ai_report?.revision_request_draft ?? ''))}>
                       {busy === `revision-${milestone.id}` ? 'Requesting…' : 'Request revision'}
                     </button>
@@ -310,33 +308,37 @@ function ClientAgreementDetail() {
               </div>
             </section>
           ))}
-        </div>
+        </section>
+      </div>
 
-        <aside className="card section-card audit-card">
-          <div className="section-heading"><div><p className="eyebrow">TRACEABILITY</p><h2>Activity</h2></div><span className="audit-count">{audit.length}</span></div>
-          {audit.length === 0 ? <p className="muted">No activity recorded yet.</p> : (
-            <ol className="activity-list" aria-label="Agreement activity">
-              {audit.slice().reverse().map((entry) => {
-                const description = activityDescription(entry);
-                return (
-                  <li className="activity-entry" key={entry.id}>
-                    <span className={`activity-dot actor-icon actor-icon-${description.actor.toLowerCase()}`} aria-hidden="true">
-                      {description.actor === 'Provider' ? 'P' : description.actor === 'Client' ? 'C' : description.actor === 'AI' ? 'AI' : 'PP'}
-                    </span>
-                    <div className="activity-copy">
-                      <strong>{description.message}</strong>
-                      <span>{description.actor}</span>
-                    </div>
-                    <time dateTime={entry.created_at ?? undefined}>
-                      {entry.created_at ? new Date(entry.created_at).toLocaleString() : 'Just now'}
-                    </time>
-                  </li>
-                );
-              })}
-            </ol>
-          )}
-        </aside>
-      </section>
+      <details className="secondary-detail-accordion card section-card">
+        <summary>Payment record and invoices</summary>
+        <InvoiceTable agreement={agreement} />
+      </details>
+      <details className="secondary-detail-accordion card section-card">
+        <summary>Activity · {audit.length} events</summary>
+        {audit.length === 0 ? <p className="muted">No activity recorded yet.</p> : (
+          <ol className="activity-list" aria-label="Agreement activity">
+            {audit.slice().reverse().map((entry) => {
+              const description = activityDescription(entry);
+              return (
+                <li className="activity-entry" key={entry.id}>
+                  <span className={`activity-dot actor-icon actor-icon-${description.actor.toLowerCase()}`} aria-hidden="true">
+                    {description.actor === 'Provider' ? 'P' : description.actor === 'Client' ? 'C' : description.actor === 'AI' ? 'AI' : 'PP'}
+                  </span>
+                  <div className="activity-copy">
+                    <strong>{description.message}</strong>
+                    <span>{description.actor}</span>
+                  </div>
+                  <time dateTime={entry.created_at ?? undefined}>
+                    {entry.created_at ? new Date(entry.created_at).toLocaleString() : 'Just now'}
+                  </time>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </details>
     </>
   );
 }
