@@ -29,7 +29,7 @@ interface RoleContextType {
   role: Role;
   user: UserInfo;
   setRole: (role: Role) => void;
-  demoMode: 'mock' | 'real';
+  demoMode: 'mock' | 'real' | 'loading' | 'unavailable';
   demoModeError: string;
 }
 
@@ -39,7 +39,7 @@ export function RoleProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<Role>(() =>
     window.location.pathname.startsWith('/provider') ? 'provider' : 'client',
   );
-  const [demoMode, setDemoMode] = useState<'mock' | 'real'>('real');
+  const [demoMode, setDemoMode] = useState<'mock' | 'real' | 'loading' | 'unavailable'>('loading');
   const [demoModeError, setDemoModeError] = useState('');
 
   useEffect(() => {
@@ -53,6 +53,7 @@ export function RoleProvider({ children }: { children: ReactNode }) {
       })
       .catch((error: unknown) => {
         if (active) {
+          setDemoMode('unavailable');
           setDemoModeError(error instanceof Error ? error.message : 'Demo mode could not be loaded.');
         }
       });

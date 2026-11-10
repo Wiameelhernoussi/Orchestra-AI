@@ -4,12 +4,16 @@ import hmac
 import json
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, StrictInt
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, StrictInt, ValidationError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.api.deps import (
     get_completion_provider,
@@ -39,6 +43,17 @@ from app.services.groq_agents import (
     IntentAgent,
 )
 from app.services.evidence_facts import EvidenceFactChecker
+from app.services.evidence_storage import (
+    MAX_EVIDENCE_FILE_BYTES,
+    MAX_EVIDENCE_FILES,
+    MAX_EVIDENCE_TOTAL_BYTES,
+    remove_evidence_files,
+    resolve_evidence_file,
+    safe_display_filename,
+    store_evidence_files,
+    validate_evidence_file,
+)
+from app.services.payment_readiness import calculate_payment_readiness
 from app.state_machine.agreement_fsm import (
     AgreementStatus,
     validate_agreement_transition,
@@ -102,9 +117,16 @@ class DecisionNotes(BaseModel):
     notes: str = Field(default="", max_length=2000)
 
 
+class ApprovalDecision(BaseModel):
+    acknowledge_unverified: bool = False
+
+
 class EvidenceSubmission(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     text: str = Field(default="", max_length=6000)
     links: list[HttpUrl] = Field(default_factory=list, max_length=10)
+    criterion_ids: list[str] = Field(default_factory=list, max_length=20)
 
 
 def _record_audit(
@@ -163,6 +185,78 @@ def _milestone_for_agreement(
     return milestone
 
 
+@router.get("/milestones/{milestone_id}/payment-readiness")
+def get_milestone_payment_readiness(
+    milestone_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    milestone = db.get(Milestone, milestone_id)
+    if milestone is None:
+        raise HTTPException(status_code=404, detail="Milestone not found.")
+    agreement = _agreement_for_member(db, milestone.agreement_id, user)
+    milestone = _milestone_for_agreement(db, agreement, milestone_id)
+    return calculate_payment_readiness(db, milestone)
+
+
+@router.get("/evidence/{evidence_id}/attachments/{attachment_id}")
+def download_evidence_attachment(
+    evidence_id: str,
+    attachment_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    evidence = db.get(Evidence, evidence_id)
+    if evidence is None or not evidence.file_path:
+        raise HTTPException(status_code=404, detail="Attachment not found.")
+    milestone = db.get(Milestone, evidence.milestone_id)
+    agreement = (
+        db.get(Agreement, milestone.agreement_id)
+        if milestone is not None
+        else None
+    )
+    if agreement is None:
+        raise HTTPException(status_code=404, detail="Attachment not found.")
+    _agreement_for_member(db, agreement.id, user)
+    try:
+        evidence_data = json.loads(evidence.content or "{}")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=404, detail="Attachment not found.") from None
+    attachments = (
+        evidence_data.get("attachments")
+        if isinstance(evidence_data, dict)
+        else None
+    )
+    metadata = next(
+        (
+            item
+            for item in attachments
+            if isinstance(item, dict) and item.get("id") == attachment_id
+        ),
+        None,
+    ) if isinstance(attachments, list) else None
+    if metadata is None:
+        raise HTTPException(status_code=404, detail="Attachment not found.")
+    path = resolve_evidence_file(settings.MEDIA_DIR, evidence.id, attachment_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Attachment not found.")
+    content_type = metadata.get("content_type")
+    if content_type not in {
+        "application/pdf",
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+    }:
+        raise HTTPException(status_code=404, detail="Attachment not found.")
+    return FileResponse(
+        path,
+        media_type=content_type,
+        filename=safe_display_filename(str(metadata.get("name", "evidence-file"))),
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
 def _transition_milestone(
     milestone: Milestone,
     target: MilestoneStatus,
@@ -211,11 +305,17 @@ def _milestone_summary(db: Session, milestone: Milestone) -> dict[str, Any]:
             item.description
             for item in sorted(milestone.criteria, key=lambda criterion: criterion.id)
         ],
+        "criteria": [
+            {"id": item.id, "description": item.description}
+            for item in sorted(milestone.criteria, key=lambda criterion: criterion.id)
+        ],
         "evidence": [
             {
                 "id": item.id,
                 "type": item.evidence_type,
                 "content": item.content,
+                "submission_status": "SUBMITTED",
+                "verification_status": "ADVISORY",
                 "ai_report": json.loads(item.ai_report) if item.ai_report else None,
                 "link_checks": json.loads(item.link_checks) if item.link_checks else [],
                 "created_at": item.created_at.isoformat() if item.created_at else None,
@@ -233,6 +333,7 @@ def _milestone_summary(db: Session, milestone: Milestone) -> dict[str, Any]:
             }
             for invoice in invoices
         ],
+        "payment_readiness": calculate_payment_readiness(db, milestone),
     }
 
 
@@ -435,11 +536,44 @@ def get_client_agreement(
 def approve_milestone(
     agreement_id: str,
     milestone_id: str,
+    request: ApprovalDecision = Body(default=ApprovalDecision()),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
     agreement = _agreement_for_member(db, agreement_id, user, required_role="client")
     milestone = _milestone_for_agreement(db, agreement, milestone_id)
+    readiness = calculate_payment_readiness(db, milestone)
+    if not readiness["client_approval_allowed"]:
+        reasons = " ".join(readiness["blocking_reasons"])
+        raise HTTPException(
+            status_code=409,
+            detail=reasons or "Evidence must be submitted for client review before approval.",
+        )
+    unverified_criteria = readiness["criteria_summary"]["criteria"]
+    unverified_criteria = [
+        item
+        for item in unverified_criteria
+        if item["status"] != "verified"
+    ]
+    advisory_verdict = readiness["advisory_verdict"]
+    acknowledgement_required = (
+        advisory_verdict != "sufficient" or bool(unverified_criteria)
+    )
+    if acknowledgement_required and not request.acknowledge_unverified:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "Client acknowledgement is required because the AI advisory "
+                    "is not sufficient or some criteria are unverified."
+                ),
+                "advisory_verdict": advisory_verdict,
+                "unverified_criteria": unverified_criteria,
+                "acknowledge_unverified_required": True,
+            },
+        )
+
+    approved_at = datetime.now(timezone.utc)
     _transition_milestone(
         milestone,
         MilestoneStatus.APPROVED,
@@ -450,13 +584,50 @@ def approve_milestone(
         milestone_id=milestone.id,
         approved_by=user.id,
         decision="approved",
-        created_at=datetime.now(timezone.utc),
+        notes=json.dumps(
+            {
+                "acknowledged_unverified": acknowledgement_required,
+                "unverified_criteria": unverified_criteria,
+                "advisory_verdict": advisory_verdict,
+                "approved_at": approved_at.isoformat(),
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ),
+        created_at=approved_at,
     )
     db.add(approval)
+    db.flush()
+    readiness = calculate_payment_readiness(db, milestone)
+    if readiness["status"] == "READY_FOR_PAYMENT":
+        _record_audit(
+            db,
+            agreement,
+            "payment_unlocked",
+            user=user,
+            entity_type="milestone",
+            entity_id=milestone.id,
+            details={"actor": "CLIENT", "readiness_status": readiness["status"]},
+        )
     _record_audit(
         db, agreement, "milestone_approved", user=user,
         entity_type="milestone", entity_id=milestone.id,
     )
+    if acknowledgement_required:
+        _record_audit(
+            db,
+            agreement,
+            "milestone_approved_with_unverified_criteria",
+            user=user,
+            entity_type="milestone",
+            entity_id=milestone.id,
+            details={
+                "unverified_criteria": unverified_criteria,
+                "advisory_verdict": advisory_verdict,
+                "user_id": user.id,
+                "approved_at": approved_at.isoformat(),
+            },
+        )
     db.commit()
     db.refresh(milestone)
     return _milestone_summary(db, milestone)
@@ -611,10 +782,10 @@ def start_milestone(
 
 
 @provider_router.post("/agreements/{agreement_id}/milestones/{milestone_id}/evidence")
-def submit_evidence(
+async def submit_evidence(
     agreement_id: str,
     milestone_id: str,
-    request: EvidenceSubmission,
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
@@ -625,12 +796,102 @@ def submit_evidence(
     milestone = _milestone_for_agreement(db, agreement, milestone_id)
     if milestone.status != MilestoneStatus.IN_PROGRESS.value:
         raise HTTPException(status_code=409, detail="Milestone must be in progress.")
-    content = request.text.strip()
-    links = [str(link) for link in request.links]
-    if not content and not links:
-        raise HTTPException(status_code=422, detail="Provide evidence text or at least one link.")
+    content_type = request.headers.get("content-type", "").casefold()
+    prepared_attachments: list[dict[str, Any]] = []
+    try:
+        if content_type.startswith("application/json"):
+            submission = EvidenceSubmission.model_validate(await request.json())
+        elif content_type.startswith("multipart/form-data"):
+            async with request.form(
+                max_files=MAX_EVIDENCE_FILES + 1,
+                max_fields=40,
+                max_part_size=32768,
+            ) as form:
+                form_links = [
+                    line.strip()
+                    for value in form.getlist("links")
+                    if isinstance(value, str)
+                    for line in value.splitlines()
+                    if line.strip()
+                ]
+                submission = EvidenceSubmission.model_validate(
+                    {
+                        "text": form.get("text", ""),
+                        "links": form_links,
+                        "criterion_ids": [
+                            value
+                            for value in form.getlist("criterion_ids")
+                            if isinstance(value, str)
+                        ],
+                    }
+                )
+                uploads = [
+                    value
+                    for value in form.getlist("files")
+                    if isinstance(value, StarletteUploadFile)
+                    and bool(value.filename)
+                ]
+                if len(uploads) > MAX_EVIDENCE_FILES:
+                    raise HTTPException(status_code=413, detail="Attach no more than 5 files.")
+                total_file_bytes = 0
+                for upload in uploads:
+                    if upload.size is not None and upload.size > MAX_EVIDENCE_FILE_BYTES:
+                        raise HTTPException(
+                            status_code=413,
+                            detail="Each attachment must be 10 MB or smaller.",
+                        )
+                    data = await upload.read(MAX_EVIDENCE_FILE_BYTES + 1)
+                    total_file_bytes += len(data)
+                    if total_file_bytes > MAX_EVIDENCE_TOTAL_BYTES:
+                        raise HTTPException(
+                            status_code=413,
+                            detail="Attachments must total 20 MB or less.",
+                        )
+                    prepared_attachments.append(
+                        validate_evidence_file(
+                            upload.filename or "",
+                            upload.content_type,
+                            data,
+                        )
+                    )
+        else:
+            raise HTTPException(
+                status_code=415,
+                detail="Submit evidence as JSON or multipart form data.",
+            )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=exc.errors(include_input=False),
+        ) from exc
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=422, detail="Evidence submission is invalid.") from exc
+
+    content = submission.text.strip()
+    links = [str(link) for link in submission.links]
+    criterion_ids = list(dict.fromkeys(submission.criterion_ids))
+    if not content:
+        raise HTTPException(
+            status_code=422,
+            detail="An evidence description is required.",
+        )
+    milestone_criterion_ids = {criterion.id for criterion in milestone.criteria}
+    if any(item not in milestone_criterion_ids for item in criterion_ids):
+        raise HTTPException(
+            status_code=422,
+            detail="Selected acceptance criteria must belong to this milestone.",
+        )
+    attachment_metadata = [
+        {key: value for key, value in item.items() if key != "_data"}
+        for item in prepared_attachments
+    ]
     evidence_content = json.dumps(
-        {"text": content, "links": links},
+        {
+            "text": content,
+            "links": links,
+            "criterion_ids": criterion_ids,
+            "attachments": attachment_metadata,
+        },
         ensure_ascii=True,
         separators=(",", ":"),
     )
@@ -647,6 +908,9 @@ def submit_evidence(
             criteria,
             evidence_content,
             trusted_facts=link_checks,
+            uninspected_attachments=attachment_metadata,
+            non_text_evidence_only=not content and bool(links or prepared_attachments),
+            has_external_links=bool(links),
         )
     except GroqRateLimitError as exc:
         logger.warning("evidence_assessment_rate_limited")
@@ -658,12 +922,27 @@ def submit_evidence(
         logger.warning("evidence_assessment_failed error_type=%s", type(exc).__name__)
         raise HTTPException(status_code=502, detail="Evidence assessment failed.") from exc
 
+    evidence_id = str(uuid4())
+    try:
+        stored_file_path = store_evidence_files(
+            settings.MEDIA_DIR,
+            evidence_id,
+            prepared_attachments,
+        )
+    except OSError as exc:
+        logger.error("evidence_storage_failed error_type=%s", type(exc).__name__)
+        raise HTTPException(
+            status_code=500,
+            detail="Attachments could not be stored securely. Please retry.",
+        ) from exc
+
     evidence = Evidence(
-        id=str(uuid4()),
+        id=evidence_id,
         milestone_id=milestone.id,
         submitted_by=user.id,
         evidence_type="submission",
         content=evidence_content,
+        file_path=stored_file_path,
         ai_report=json.dumps(assessment.data, ensure_ascii=False, separators=(",", ":")),
         link_checks=json.dumps(
             link_checks,
@@ -681,6 +960,8 @@ def submit_evidence(
         entity_id=milestone.id,
         details={
             "evidence_id": evidence.id,
+            "criterion_ids": criterion_ids,
+            "attachment_count": len(attachment_metadata),
         },
     )
     _record_audit(
@@ -696,11 +977,30 @@ def submit_evidence(
             "advisory_only": True,
         },
     )
-    db.commit()
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        if stored_file_path:
+            try:
+                remove_evidence_files(settings.MEDIA_DIR, evidence_id)
+            except OSError as cleanup_error:
+                logger.error(
+                    "evidence_storage_cleanup_failed error_type=%s",
+                    type(cleanup_error).__name__,
+                )
+        logger.error("evidence_save_failed error_type=%s", type(exc).__name__)
+        raise HTTPException(
+            status_code=500,
+            detail="Evidence could not be saved. Please retry.",
+        ) from exc
     db.refresh(evidence)
     return {
         "evidence_id": evidence.id,
         "milestone_id": milestone.id,
+        "submission_status": "SUBMITTED",
+        "verification_status": "ADVISORY",
+        "attachments": attachment_metadata,
         "ai_report": assessment.data,
         "link_checks": link_checks,
         "milestone_status": milestone.status,
@@ -800,6 +1100,13 @@ def seed_demo(
     demo_milestone_ids = db.query(Milestone.id).filter(
         Milestone.agreement_id.in_(demo_agreement_ids)
     )
+    uploaded_demo_evidence_ids = [
+        item.id
+        for item in db.query(Evidence)
+        .filter(Evidence.milestone_id.in_(demo_milestone_ids))
+        .filter(Evidence.file_path.is_not(None))
+        .all()
+    ]
     db.query(WebhookEvent).filter(
         WebhookEvent.resource_id.in_(
             db.query(Invoice.paypal_invoice_id).filter(
@@ -950,6 +1257,14 @@ def seed_demo(
         details={"scenario": "e-commerce", "total_amount_cents": 60000},
     )
     db.commit()
+    for evidence_id in uploaded_demo_evidence_ids:
+        try:
+            remove_evidence_files(settings.MEDIA_DIR, evidence_id)
+        except OSError as exc:
+            logger.error(
+                "demo_evidence_cleanup_failed error_type=%s",
+                type(exc).__name__,
+            )
     return {
         "status": "seeded",
         "client_user_id": client_user.id,

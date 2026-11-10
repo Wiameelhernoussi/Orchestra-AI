@@ -21,6 +21,14 @@ approval can the system create a standard PayPal invoice. Verified PayPal
 webhooks update payment state; an invoice-sync endpoint is available as a
 fallback.
 
+Provider evidence requires a written description and can optionally include
+URLs and private PNG/JPEG/WebP/PDF attachments. Link checks are bounded and
+SSRF-protected; they report limited observations such as reachability and page
+title (and public GitHub repository/root-file metadata), not proof of deliverable
+contents or criterion relevance. Uploaded files are available to agreement
+members for download, but this prototype does not inspect image or PDF contents.
+The AI labels its results advisory, and client approval remains required.
+
 ## Architecture
 
 - **Frontend:** React, TypeScript, Vite, and AG Grid Community dashboards.
@@ -33,7 +41,9 @@ fallback.
 - **Payments:** Standard PayPal Invoicing API and verified webhooks in Sandbox.
   Mock mode uses a fake payment client and never contacts PayPal.
 - **Workflow:** Plain-code state machines enforce roles, client approval, and
-  sequential milestones.
+  sequential milestones. A deterministic Payment Readiness Engine derives
+  blockers from persisted agreement, evidence, approval, and invoice records;
+  invoice creation rechecks eligibility on the backend.
 
 ## Quick setup: mock mode
 
@@ -54,6 +64,8 @@ database and applies migrations. Choose **Reset demo** to seed the sample
 $600 e-commerce agreement. The top bar marks **Mock mode · simulated
 payments**. Mock payment status changes to `PAID` when you select the sync
 action; it does not represent a PayPal transaction.
+The frontend container runs `npm ci` on startup so its persistent dependency
+volume stays synchronized with `frontend/package-lock.json`.
 
 To stop the app, press `Ctrl+C` or run `docker compose down`. The database
 volume is retained unless explicitly removed.
@@ -86,6 +98,11 @@ volume is retained unless explicitly removed.
 The UI is at `http://localhost:5173`; API health is at
 `http://localhost:8000/api/v1/health`. To run Docker on alternate host ports,
 set `UI_PORT`, `API_PORT`, or `POSTGRES_PORT` before `docker compose up`.
+Agreement members can inspect a milestone's derived readiness at
+`GET /api/v1/milestones/{milestone_id}/payment-readiness`. A client must review
+the submitted evidence and explicitly approve before invoicing. If the AI
+advisory is not sufficient or criteria remain unverified, the client must
+acknowledge that limitation; the AI never approves or unlocks payment.
 
 For webhooks, configure the PayPal Sandbox app's webhook URL to the publicly
 reachable HTTPS endpoint `https://<your-public-host>/api/v1/webhooks/paypal`

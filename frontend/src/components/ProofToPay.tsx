@@ -52,6 +52,9 @@ function completedSteps(milestone: Milestone): number {
 export function ProofToPay({ milestone }: { milestone: Milestone }) {
   const current = proofToPayProgress(milestone);
   const completed = completedSteps(milestone);
+  const readiness = milestone.payment_readiness;
+  const readinessLabel = readiness.status.replace(/_/g, ' ').toLowerCase();
+  const invoiceAllowed = readiness.paypal_invoice_allowed;
 
   return (
     <section className="proof-to-pay" aria-label={`Proof-to-Pay for ${milestone.title}`}>
@@ -59,7 +62,7 @@ export function ProofToPay({ milestone }: { milestone: Milestone }) {
         <span className="proof-to-pay-label">PROOF-TO-PAY</span>
         <span className="proof-to-pay-current">{milestone.status === 'PAID' ? 'Complete' : `Step ${current + 1} of ${STEPS.length}`}</span>
       </div>
-      <ol className="proof-steps">
+      <ol className="proof-steps" aria-label="Proof-to-Pay workflow steps">
         {STEPS.map((step, index) => {
           const isComplete = index < completed;
           const isCurrent = index === current && milestone.status !== 'PAID';
@@ -80,6 +83,61 @@ export function ProofToPay({ milestone }: { milestone: Milestone }) {
           );
         })}
       </ol>
+
+      <section className={`readiness-panel${readiness.ready ? ' is-ready' : ''}`} aria-label="Payment readiness">
+        <div className="readiness-heading">
+          <div>
+            <span className="proof-to-pay-label">PAYMENT READINESS</span>
+            <strong className="readiness-score">{readiness.score}%</strong>
+          </div>
+          <span className={`readiness-status readiness-${readiness.status.toLowerCase()}`}>
+            {readinessLabel}
+          </span>
+        </div>
+        <div
+          className="readiness-progress"
+          role="progressbar"
+          aria-label="Payment readiness score"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={readiness.score}
+        >
+          <span style={{ width: `${readiness.score}%` }} />
+        </div>
+        <ul className="readiness-checks">
+          {readiness.checks.map((check) => (
+            <li className={check.complete ? 'is-complete' : check.required ? 'is-pending' : 'is-optional'} key={check.key}>
+              <span aria-hidden="true">{check.complete ? '✓' : check.required ? '○' : '—'}</span>
+              <span>{check.label}{!check.required && <small> Optional</small>}</span>
+            </li>
+          ))}
+        </ul>
+
+        {readiness.ready && invoiceAllowed ? (
+          <div className="readiness-unlocked" role="status">
+            <strong>✓ Payment unlocked</strong>
+            <span>Human approval recorded. PayPal invoice creation is available.</span>
+          </div>
+        ) : readiness.status !== 'INVOICE_SENT' && readiness.status !== 'PAID' ? (
+          <div className="readiness-blocked">
+            <strong>{readiness.status === 'READY_FOR_APPROVAL' ? 'Ready for client approval' : 'Payment blocked'}</strong>
+            {readiness.blocking_reasons.length > 0 && (
+              <ul>
+                {readiness.blocking_reasons.map((reason) => <li key={reason}>{reason}</li>)}
+              </ul>
+            )}
+          </div>
+        ) : null}
+        <p className="readiness-next-action">
+          <strong>Next action · {readiness.next_action.actor}</strong>
+          <span>{readiness.next_action.action}</span>
+        </p>
+        {readiness.criteria_summary.total > 0 && (
+          <p className="readiness-criteria-summary">
+            {readiness.criteria_summary.verified}/{readiness.criteria_summary.total} criteria verified
+          </p>
+        )}
+      </section>
     </section>
   );
 }

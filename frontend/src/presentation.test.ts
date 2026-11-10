@@ -32,6 +32,22 @@ function makeAgreement(
       acceptance_criteria: [],
       evidence: [],
       invoices: [],
+      payment_readiness: {
+        status: 'BLOCKED',
+        score: 0,
+        ready: false,
+        paypal_invoice_allowed: false,
+        client_approval_allowed: false,
+        client_acknowledged_advisory: false,
+        advisory_verdict: 'sufficient',
+        blocking_reasons: [],
+        completed_checks: [],
+        checks: [],
+        next_action: { actor: 'PROVIDER', action: 'Submit evidence.' },
+        criteria_summary: { total: 0, verified: 0, unverified: 0, criteria: [] },
+        approval_status: 'PENDING',
+        paypal_status: 'NOT_CREATED',
+      },
     }],
   };
 }

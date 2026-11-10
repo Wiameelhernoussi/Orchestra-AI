@@ -8,6 +8,28 @@ describe('AdvisoryCard', () => {
   it('shows the human approval gate and criterion-level evidence states', () => {
     render(
       <AdvisoryCard
+        linkFacts={[
+          {
+            url: 'https://example.test/unavailable',
+            https: true,
+            http_status: null,
+            title: null,
+            result: 'unavailable',
+            reason: 'Connection timed out.',
+            github_repo_exists: null,
+            github_expected_files: [],
+          },
+          {
+            url: 'https://example.test/design',
+            https: true,
+            http_status: 200,
+            title: 'Design Preview',
+            result: 'checked',
+            reason: 'HTTP response received.',
+            github_repo_exists: null,
+            github_expected_files: [],
+          },
+        ]}
         report={{
           overall_verdict: 'partial',
           report: 'One item needs more evidence.',
@@ -32,5 +54,12 @@ describe('AdvisoryCard', () => {
     expect(screen.getByText('✓ Verified')).toBeInTheDocument();
     expect(screen.getByText('– Not verifiable')).toBeInTheDocument();
     expect(screen.getByText('One item needs more evidence.')).toBeInTheDocument();
+    expect(screen.getByText('Inaccessible to automated checker')).toBeInTheDocument();
+    expect(screen.getByText('Reachable · HTTP 200')).toBeInTheDocument();
+    expect(screen.getByText(/linked contents and relevance to the criterion are not verified/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'https://example.test/design' })).toHaveAttribute(
+      'href',
+      'https://example.test/design',
+    );
   });
 });

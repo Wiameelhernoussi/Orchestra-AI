@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db, get_paypal_client
+from app.api.deps import get_current_user, get_db, get_paypal_client, get_settings
+from app.config import Settings
 from app.models.approval import Approval
 from app.models.agreement import Agreement
 from app.models.audit import AuditLog
@@ -11,12 +12,14 @@ from app.models.invoice import Invoice
 from app.models.milestone import Milestone
 from app.models.user import User
 from app.services.paypal.client import PaypalAPIError, PaypalClient
+from app.services.mock_integrations import MockPaypalClient
 from app.services.paypal.invoicing import (
     apply_paypal_invoice_status,
     create_or_retry_invoice,
     log_invoice_operation_failure,
     redacted_invoice_error_message,
 )
+from app.services.payment_readiness import PaymentNotReadyError, calculate_payment_readiness
 from app.state_machine.exceptions import InvalidTransitionError
 
 router = APIRouter(prefix="/payments", tags=["payments"])
@@ -66,6 +69,16 @@ def create_milestone_invoice(
         raise HTTPException(status_code=409, detail="A recorded client approval is required before invoicing.")
 
     try:
+        readiness = calculate_payment_readiness(db, milestone)
+        if not readiness["ready"] or not readiness["paypal_invoice_allowed"]:
+            reasons = " ".join(readiness["blocking_reasons"])
+            raise PaymentNotReadyError(
+                {
+                    **readiness,
+                    "blocking_reasons": readiness["blocking_reasons"]
+                    or [reasons or "The milestone is not eligible for invoicing."],
+                }
+            )
         invoice = create_or_retry_invoice(db, milestone, current_user.email, paypal)
         try:
             db.add(
@@ -88,6 +101,9 @@ def create_milestone_invoice(
                 detail="Invoice was created but could not be fully recorded. Retrying is safe.",
             ) from exc
         return invoice
+    except PaymentNotReadyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except InvalidTransitionError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -145,6 +161,7 @@ def sync_invoice_status(
         if remote_id != invoice.paypal_invoice_id or not isinstance(remote_status, str):
             raise PaypalAPIError("PayPal Sandbox returned an unexpected invoice.")
         apply_paypal_invoice_status(db, invoice, remote_status)
+        status_source = "mock_client" if isinstance(paypal, MockPaypalClient) else "paypal_api"
         db.add(
             AuditLog(
                 agreement_id=agreement.id,
@@ -152,7 +169,7 @@ def sync_invoice_status(
                 action="invoice_status_synchronized",
                 entity_type="invoice",
                 entity_id=invoice.id,
-                details='{"source":"paypal_api"}',
+                details=f'{{"source":"{status_source}"}}',
             )
         )
         db.commit()
@@ -161,6 +178,59 @@ def sync_invoice_status(
     except PaypalAPIError as exc:
         db.rollback()
         raise HTTPException(status_code=502, detail="Could not synchronize invoice with PayPal Sandbox.") from exc
+    except (InvalidTransitionError, ValueError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/invoices/{invoice_id}/simulate-mock-payment", response_model=InvoiceResponse)
+def simulate_mock_invoice_payment(
+    invoice_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    paypal: PaypalClient | MockPaypalClient = Depends(get_paypal_client),
+    settings: Settings = Depends(get_settings),
+) -> Invoice:
+    if settings.DEMO_MODE != "mock" or not isinstance(paypal, MockPaypalClient):
+        raise HTTPException(
+            status_code=404,
+            detail="Mock payment simulation is available only in explicit mock mode.",
+        )
+    invoice = db.get(Invoice, invoice_id)
+    if invoice is None or not invoice.paypal_invoice_id:
+        raise HTTPException(status_code=404, detail="Invoice not found.")
+    milestone = db.get(Milestone, invoice.milestone_id)
+    agreement = db.get(Agreement, milestone.agreement_id) if milestone else None
+    if (
+        agreement is None
+        or current_user.role != "client"
+        or current_user.organization_id != agreement.client_org_id
+    ):
+        raise HTTPException(status_code=404, detail="Invoice not found.")
+    if invoice.status != "SENT":
+        raise HTTPException(status_code=409, detail="Only a sent mock invoice can be simulated as paid.")
+
+    try:
+        simulated = paypal.simulate_payment(invoice.paypal_invoice_id)
+        if (
+            simulated.get("id") != invoice.paypal_invoice_id
+            or simulated.get("status") != "PAID"
+        ):
+            raise ValueError("Mock payment simulator returned an unexpected status.")
+        apply_paypal_invoice_status(db, invoice, simulated["status"])
+        db.add(
+            AuditLog(
+                agreement_id=agreement.id,
+                user_id=current_user.id,
+                action="mock_payment_simulated",
+                entity_type="invoice",
+                entity_id=invoice.id,
+                details='{"source":"explicit_mock_simulation","status":"PAID"}',
+            )
+        )
+        db.commit()
+        db.refresh(invoice)
+        return invoice
     except (InvalidTransitionError, ValueError) as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc

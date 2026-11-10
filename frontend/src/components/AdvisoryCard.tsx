@@ -60,11 +60,16 @@ export function AdvisoryCard({
                 </a>
                 <span className={`fact-result fact-${fact.result}`}>
                   {fact.result === 'checked'
-                    ? `HTTP ${fact.http_status ?? '—'}`
+                    ? fact.http_status !== null && fact.http_status >= 200 && fact.http_status < 400
+                      ? `Reachable · HTTP ${fact.http_status}`
+                      : `Non-success response · HTTP ${fact.http_status ?? '—'}`
                     : fact.result === 'blocked'
-                      ? 'Blocked'
-                      : 'Unavailable'}
+                      ? 'Not checked · blocked by safety policy'
+                      : 'Inaccessible to automated checker'}
                 </span>
+                {fact.result === 'checked' && fact.http_status !== null && fact.http_status >= 200 && fact.http_status < 400 && (
+                  <p>Reachability and limited metadata only; linked contents and relevance to the criterion are not verified.</p>
+                )}
                 {fact.title && <p>Page title: {fact.title}</p>}
                 <small>{fact.reason}</small>
                 {fact.github_repo_exists !== null && (

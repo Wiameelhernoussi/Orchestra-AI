@@ -108,7 +108,13 @@ function Layout() {
               <small>{isClient ? 'Client workspace' : 'Provider workspace'}</small>
             </span>
             <span className={`demo-label ${demoMode === 'mock' ? 'mock-mode-label' : ''}`}>
-              <span /> {demoMode === 'mock' ? 'Mock mode · simulated payments' : 'PayPal Sandbox'}
+              <span /> {demoMode === 'mock'
+                ? 'Mock mode · simulated payments'
+                : demoMode === 'real'
+                  ? 'PayPal Sandbox'
+                  : demoMode === 'loading'
+                    ? 'Checking payment mode…'
+                    : 'Payment mode unavailable'}
             </span>
           </div>
         </div>
@@ -137,7 +143,9 @@ function Layout() {
         <span>
           {demoMode === 'mock'
             ? 'From intent to agreement. From evidence to approval. From approval to payment. · Simulated payments'
-            : 'From intent to agreement. From evidence to approval. From approval to payment. · PayPal Sandbox'}
+            : demoMode === 'real'
+              ? 'From intent to agreement. From evidence to approval. From approval to payment. · PayPal Sandbox'
+              : 'From intent to agreement. From evidence to approval. From approval to payment. · Payment mode not confirmed'}
         </span>
       </footer>
     </div>

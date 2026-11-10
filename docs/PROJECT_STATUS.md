@@ -18,12 +18,13 @@ workflow, evidence review, explicit client approval, PayPal Sandbox invoices,
 webhook processing, and client/provider dashboards are present. Docker is
 currently running and the API health endpoint returns healthy.
 
-At the time of this audit, the backend suite had one failing test;
-screenshot/image evidence was not sent to Qwen; and no full browser journey
-ending in a real Sandbox payment confirmed by the webhook (with no manual sync)
-was verified. The frontend builds and its small unit suite passes. GitHub
-reports the repository as public with an MIT license, but the YouTube video and
-Devpost submission are not present in the repository.
+At the time of this audit, the backend suite had one failing test and
+screenshot/image evidence was not sent to Qwen. The team reported observing a
+live Sandbox payment confirmed by the PayPal webhook on 2026-11-04 (details in
+the payment validation note below); re-check that flow once before submission.
+The frontend builds and its small unit suite passes. GitHub reports the
+repository as public with an MIT license, but the YouTube video and Devpost
+submission are not present in the repository.
 
 ## 1. Git state
 
@@ -50,7 +51,7 @@ Devpost submission are not present in the repository.
 | Phase | Status | Evidence / remaining verification |
 |---|---|---|
 | 1. Scaffolding and state machines | **Done** | FastAPI app and health route in `backend/app/main.py`; SQLAlchemy models, Alembic migrations, and state machine tests in `backend/app/`, `backend/alembic/`, and `backend/tests/test_state_machines.py`. |
-| 2. PayPal Sandbox | **Partial** | Invoice, retry, sync, signature verification, idempotent webhook processing, and simulated API tests exist in `backend/app/services/paypal/`, `backend/app/api/v1/payments.py`, `backend/app/api/v1/webhooks.py`, and `backend/tests/test_paypal_api.py`. A real payment delivered by PayPal's webhook has not been verified. |
+| 2. PayPal Sandbox | **Partial** | Invoice, retry, sync, signature verification, idempotent webhook processing, and simulated API tests exist in `backend/app/services/paypal/`, `backend/app/api/v1/payments.py`, `backend/app/api/v1/webhooks.py`, and `backend/tests/test_paypal_api.py`. The team reported observing a live Sandbox payment confirmed by webhook on 2026-11-04; re-check once before submission. |
 | 3. Groq agents | **Partial** | Intent and advisory Evidence agents, criteria quality assessment, and model configuration exist in `backend/app/services/groq_agents.py` and `backend/app/config.py`. Image evidence is explicitly not attached to model requests, so screenshot analysis is absent. Live model behavior is not established by the automated suite. |
 | 4. End-to-end workflow | **Partial** | Client/provider workflow, approval gate, audit trail, and invoice linkage are implemented in `backend/app/api/v1/workflow.py` and `backend/app/api/v1/payments.py`. `scripts/e2e_real.py` stops after creating the first invoice; the real payment-to-webhook journey remains unverified. |
 | 5. Frontend | **Partial** | Client/provider flow and dashboards exist under `frontend/src/pages/`; reusable tables and workflow components are under `frontend/src/components/`. Build succeeds, but only three frontend unit tests exist and no full browser-flow test was found. Evidence input is text/links, not screenshot upload/analysis. |
@@ -79,6 +80,15 @@ Devpost submission are not present in the repository.
 frontend service running. `GET http://localhost:8000/api/v1/health` returned
 `healthy`; the running stack reports `DEMO_MODE=real`. This confirms the
 currently running stack, not a clean, zero-key mock-mode startup.
+
+### PayPal Sandbox payment validation note
+
+Team-reported observation on **2026-11-04**: a live PayPal Sandbox payment was
+confirmed by the verified PayPal webhook. The `webhook_events` record showed
+the `PAID` event processed, the matching activity log entry was present, and
+the UI displayed **“Confirmed by PayPal webhook.”** This was reported as an
+observed result, not independently re-run while preparing this status report.
+Re-check the live Sandbox payment/webhook flow once before submission.
 
 ### API endpoint inventory
 

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, formatMoney, type Agreement, type AuditEntry } from '../../api';
+import { api, formatMoney, parseEvidenceContent, type Agreement, type AuditEntry } from '../../api';
 import { AdvisoryCard } from '../../components/AdvisoryCard';
+import { EvidenceAttachments } from '../../components/EvidenceAttachments';
 import { MilestoneTracker } from '../../components/MilestoneTracker';
 import { NextStep } from '../../components/NextStep';
 import { StatusBadge } from '../../components/StatusBadge';
@@ -23,6 +24,8 @@ function ProviderAgreementDetail() {
   const [error, setError] = useState('');
   const [evidenceText, setEvidenceText] = useState<Record<string, string>>({});
   const [evidenceLinks, setEvidenceLinks] = useState<Record<string, string>>({});
+  const [evidenceFiles, setEvidenceFiles] = useState<Record<string, File[]>>({});
+  const [evidenceCriteria, setEvidenceCriteria] = useState<Record<string, string[]>>({});
   const [revisionNote, setRevisionNote] = useState('');
 
   const load = useCallback(async (quiet = false) => {
@@ -63,13 +66,28 @@ function ProviderAgreementDetail() {
   }
 
   async function submitEvidence(milestoneId: string) {
+    const text = (evidenceText[milestoneId] ?? '').trim();
+    if (!text) {
+      setError('Add an evidence description before submitting.');
+      return;
+    }
     const links = (evidenceLinks[milestoneId] ?? '').split('\n').map((item) => item.trim()).filter(Boolean);
     setBusy(`evidence-${milestoneId}`);
     setError('');
     try {
-      await api.submitEvidence(user.id, id, milestoneId, evidenceText[milestoneId] ?? '', links);
+      await api.submitEvidence(
+        user.id,
+        id,
+        milestoneId,
+        text,
+        links,
+        evidenceFiles[milestoneId] ?? [],
+        evidenceCriteria[milestoneId] ?? [],
+      );
       setEvidenceText((current) => ({ ...current, [milestoneId]: '' }));
       setEvidenceLinks((current) => ({ ...current, [milestoneId]: '' }));
+      setEvidenceFiles((current) => ({ ...current, [milestoneId]: [] }));
+      setEvidenceCriteria((current) => ({ ...current, [milestoneId]: [] }));
       await load(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Evidence could not be submitted.');
@@ -139,11 +157,62 @@ function ProviderAgreementDetail() {
                     </div>
                   </details>
                 )}
-                <label className="field"><span>What did you deliver?</span><textarea className="text-area" rows={3} value={evidenceText[milestone.id] ?? ''} onChange={(event) => setEvidenceText((current) => ({ ...current, [milestone.id]: event.target.value }))} placeholder="Describe the completed work and how it meets the criteria…" /></label>
-                <label className="field"><span>Evidence links <small>one URL per line</small></span><textarea className="text-area compact-area" rows={2} value={evidenceLinks[milestone.id] ?? ''} onChange={(event) => setEvidenceLinks((current) => ({ ...current, [milestone.id]: event.target.value }))} placeholder="https://…" /></label>
+                <label className="field"><span>Evidence description <small>required · explain what was delivered and how it meets the criteria</small></span><textarea className="text-area" rows={3} required value={evidenceText[milestone.id] ?? ''} onChange={(event) => setEvidenceText((current) => ({ ...current, [milestone.id]: event.target.value }))} placeholder="Describe the specific deliverables and how they meet each criterion…" /></label>
+                <label className="field"><span>Evidence URL <small>optional · one URL per line · Figma, Canva, GitHub, staging sites, Google Drive, and more</small></span><textarea className="text-area compact-area" rows={3} value={evidenceLinks[milestone.id] ?? ''} onChange={(event) => setEvidenceLinks((current) => ({ ...current, [milestone.id]: event.target.value }))} placeholder={'https://www.figma.com/…\nhttps://github.com/…'} /></label>
+                <p className="muted small-copy">URLs receive a limited reachability and metadata check only. The AI does not browse full websites or inspect design files.</p>
+                {milestone.criteria && milestone.criteria.length > 0 && (
+                  <fieldset className="evidence-criterion-picker">
+                    <legend>Related acceptance criteria <small>optional</small></legend>
+                    {milestone.criteria.map((criterion) => (
+                      <label key={criterion.id}>
+                        <input
+                          type="checkbox"
+                          checked={(evidenceCriteria[milestone.id] ?? []).includes(criterion.id)}
+                          onChange={(event) => setEvidenceCriteria((current) => {
+                            const selected = current[milestone.id] ?? [];
+                            return {
+                              ...current,
+                              [milestone.id]: event.target.checked
+                                ? [...selected, criterion.id]
+                                : selected.filter((item) => item !== criterion.id),
+                            };
+                          })}
+                        />
+                        <span>{criterion.description}</span>
+                      </label>
+                    ))}
+                  </fieldset>
+                )}
+                <label className="field">
+                  <span>Attach supporting files <small>PNG, JPEG, WebP, or PDF · up to 5 files, 10 MB each</small></span>
+                  <input
+                    className="evidence-file-input"
+                    type="file"
+                    accept=".png,.jpg,.jpeg,.webp,.pdf"
+                    multiple
+                    onChange={(event) => {
+                      const files = Array.from(event.target.files ?? []);
+                      const total = files.reduce((sum, file) => sum + file.size, 0);
+                      const invalidType = files.some((file) => !/\.(png|jpe?g|webp|pdf)$/i.test(file.name));
+                      if (files.length > 5 || files.some((file) => file.size > 10 * 1024 * 1024) || total > 20 * 1024 * 1024 || invalidType) {
+                        setError('Choose up to 5 PNG, JPEG, WebP, or PDF files, no larger than 10 MB each or 20 MB total.');
+                        event.target.value = '';
+                        setEvidenceFiles((current) => ({ ...current, [milestone.id]: [] }));
+                        return;
+                      }
+                      setError('');
+                      setEvidenceFiles((current) => ({ ...current, [milestone.id]: files }));
+                    }}
+                  />
+                </label>
+                {(evidenceFiles[milestone.id] ?? []).length > 0 && (
+                  <p className="muted small-copy" aria-live="polite">
+                    Selected: {(evidenceFiles[milestone.id] ?? []).map((file) => file.name).join(', ')}
+                  </p>
+                )}
                 <div className="form-actions">
-                  <button type="button" className="button button-secondary" disabled={busy !== '' || (!(evidenceText[milestone.id] ?? '').trim() && !(evidenceLinks[milestone.id] ?? '').trim())} onClick={() => void submitEvidence(milestone.id)}>
-                    {busy === `evidence-${milestone.id}` ? <><span className="spinner" /> Assessing…</> : 'Submit evidence'}
+                  <button type="button" className="button button-secondary" disabled={busy !== '' || !(evidenceText[milestone.id] ?? '').trim()} onClick={() => void submitEvidence(milestone.id)}>
+                    {busy === `evidence-${milestone.id}` ? <><span className="spinner" /> Uploading & assessing…</> : 'Submit evidence'}
                   </button>
                   {milestone.evidence.length > 0 && <button type="button" className="button button-primary" disabled={busy !== ''} onClick={() => void act(`review-${milestone.id}`, () => api.submitForReview(user.id, agreement.id, milestone.id))}>{busy === `review-${milestone.id}` ? 'Submitting…' : 'Submit for client review'}</button>}
                 </div>
@@ -155,12 +224,26 @@ function ProviderAgreementDetail() {
                 <h3 className="subsection-title">Submitted evidence & advisory</h3>
                 {milestone.evidence.map((item) => (
                   <div className="evidence-card" key={item.id}>
-                    <p className="evidence-copy">{(() => {
-                      try {
-                        const parsed = JSON.parse(item.content) as { text?: unknown };
-                        return typeof parsed.text === 'string' ? parsed.text : item.content;
-                      } catch { return item.content; }
-                    })()}</p>
+                    <div className="evidence-meta">
+                      <span>Evidence submitted · AI results are advisory</span>
+                      <span>{item.created_at ? new Date(item.created_at).toLocaleString() : ''}</span>
+                    </div>
+                    {(() => {
+                      const parsed = parseEvidenceContent(item.content);
+                      const related = milestone.criteria?.filter((criterion) => parsed.criterion_ids.includes(criterion.id)) ?? [];
+                      return (
+                        <>
+                          {parsed.text && <p className="evidence-copy">{parsed.text}</p>}
+                          {parsed.links.map((link) => <a className="evidence-link" href={link} target="_blank" rel="noreferrer" key={link}>{link} ↗</a>)}
+                          {related.length > 0 && (
+                            <p className="evidence-related-criteria">
+                              Related to: {related.map((criterion) => criterion.description).join(' · ')}
+                            </p>
+                          )}
+                          <EvidenceAttachments userId={user.id} evidenceId={item.id} attachments={parsed.attachments} />
+                        </>
+                      );
+                    })()}
                     {item.ai_report && <AdvisoryCard report={item.ai_report} linkFacts={item.link_checks} />}
                   </div>
                 ))}

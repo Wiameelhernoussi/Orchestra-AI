@@ -14,6 +14,7 @@ from app.models.agreement import Agreement
 from app.models.audit import AuditLog
 from app.models.invoice import Invoice
 from app.models.milestone import Milestone
+from app.services.payment_readiness import require_payment_readiness
 from app.services.paypal.client import PaypalAPIError, PaypalClient
 from app.state_machine.exceptions import InvalidTransitionError
 from app.state_machine.milestone_fsm import (
@@ -157,11 +158,16 @@ def _create_or_retry_invoice(
     )
 
     if invoice and invoice.status in {"SENT", "PAID"}:
-        if current_status in {
-            MilestoneStatus.APPROVED,
-            MilestoneStatus.INVOICING,
-        }:
-            apply_paypal_invoice_status(db, invoice, invoice.status)
+        if not invoice.paypal_invoice_id:
+            raise ValueError("Existing invoice is missing its PayPal invoice ID.")
+        operation["step"] = "verify_existing_invoice_status"
+        remote_invoice = paypal.get_invoice(invoice.paypal_invoice_id)
+        if (
+            remote_invoice.get("id") != invoice.paypal_invoice_id
+            or not isinstance(remote_invoice.get("status"), str)
+        ):
+            raise PaypalAPIError("PayPal Sandbox returned an unexpected invoice.")
+        apply_paypal_invoice_status(db, invoice, remote_invoice["status"])
         if not invoice.paypal_invoice_url and invoice.paypal_invoice_id:
             invoice.paypal_invoice_url = _payer_view_url(
                 {}, invoice.paypal_invoice_id
@@ -169,6 +175,8 @@ def _create_or_retry_invoice(
         db.commit()
         db.refresh(invoice)
         return invoice
+
+    require_payment_readiness(db, milestone)
 
     if current_status not in {
         MilestoneStatus.APPROVED,

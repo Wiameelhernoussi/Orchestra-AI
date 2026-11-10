@@ -47,10 +47,27 @@ export interface LinkCheckFact {
   github_expected_files: { name: string; present: boolean }[];
 }
 
+export interface EvidenceAttachment {
+  id: string;
+  name: string;
+  content_type: string;
+  size_bytes: number;
+  inspection_status: 'not_inspected_by_ai';
+}
+
+export interface EvidenceContent {
+  text: string;
+  links: string[];
+  criterion_ids: string[];
+  attachments: EvidenceAttachment[];
+}
+
 export interface Evidence {
   id: string;
   type: string;
   content: string;
+  submission_status: 'SUBMITTED';
+  verification_status: 'ADVISORY';
   ai_report: EvidenceReport | null;
   link_checks: LinkCheckFact[];
   created_at: string | null;
@@ -65,6 +82,43 @@ export interface Invoice {
   payer_view_url: string | null;
 }
 
+export interface PaymentReadinessCheck {
+  key: string;
+  label: string;
+  complete: boolean;
+  required: boolean;
+}
+
+export interface PaymentReadiness {
+  status:
+    | 'NOT_READY'
+    | 'IN_REVIEW'
+    | 'READY_FOR_APPROVAL'
+    | 'READY_FOR_PAYMENT'
+    | 'INVOICE_CREATED'
+    | 'INVOICE_SENT'
+    | 'PAID'
+    | 'BLOCKED';
+  score: number;
+  ready: boolean;
+  paypal_invoice_allowed: boolean;
+  client_approval_allowed: boolean;
+  client_acknowledged_advisory: boolean;
+  advisory_verdict: 'sufficient' | 'partial' | 'insufficient' | 'unavailable';
+  blocking_reasons: string[];
+  completed_checks: string[];
+  checks: PaymentReadinessCheck[];
+  next_action: { actor: 'CLIENT' | 'PROVIDER' | 'AI' | 'PAYPAL' | 'SYSTEM'; action: string };
+  criteria_summary: {
+    total: number;
+    verified: number;
+    unverified: number;
+    criteria: { criterion: string; status: 'verified' | 'not_verifiable' | 'missing' }[];
+  };
+  approval_status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  paypal_status: string;
+}
+
 export interface Milestone {
   id: string;
   title: string;
@@ -73,8 +127,10 @@ export interface Milestone {
   status: MilestoneStatus;
   amount_cents: number;
   acceptance_criteria: string[];
+  criteria?: { id: string; description: string }[];
   evidence: Evidence[];
   invoices: Invoice[];
+  payment_readiness: PaymentReadiness;
 }
 
 export interface Agreement {
@@ -135,7 +191,9 @@ async function request<T>(
 ): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set('Accept', 'application/json');
-  if (options.body) headers.set('Content-Type', 'application/json');
+  if (options.body && !(options.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json');
+  }
   if (userId) headers.set('X-User-Id', userId);
 
   let response: Response;
@@ -153,6 +211,28 @@ async function request<T>(
         message = 'The AI is busy right now. Please try again in a moment.';
       } else if (typeof body.detail === 'string') {
         message = body.detail;
+      } else if (
+        typeof body.detail === 'object'
+        && body.detail !== null
+        && 'message' in body.detail
+        && typeof body.detail.message === 'string'
+      ) {
+        message = body.detail.message;
+        const criteria = 'unverified_criteria' in body.detail
+          && Array.isArray(body.detail.unverified_criteria)
+          ? body.detail.unverified_criteria
+              .filter(
+                (item): item is { criterion: string } =>
+                  typeof item === 'object'
+                  && item !== null
+                  && 'criterion' in item
+                  && typeof item.criterion === 'string',
+              )
+              .map((item) => item.criterion)
+          : [];
+        if (criteria.length > 0) {
+          message += ` Unverified criteria: ${criteria.join('; ')}`;
+        }
       } else if (Array.isArray(body.detail)) {
         message = 'Some fields need attention. Please review the form and try again.';
       }
@@ -177,6 +257,11 @@ export const api = {
     request<Agreement[]>(`/api/v1/${role}/agreements`, userId),
   getAgreement: (role: Role, id: string, userId: string) =>
     request<Agreement>(`/api/v1/${role}/agreements/${id}`, userId),
+  paymentReadiness: (userId: string, milestoneId: string) =>
+    request<PaymentReadiness>(
+      `/api/v1/milestones/${milestoneId}/payment-readiness`,
+      userId,
+    ),
   parseIntent: (userId: string, text: string) =>
     request<Intent>(
       '/api/v1/client/intents/parse',
@@ -205,11 +290,16 @@ export const api = {
       userId,
       json('POST'),
     ),
-  approveMilestone: (userId: string, agreementId: string, milestoneId: string) =>
+  approveMilestone: (
+    userId: string,
+    agreementId: string,
+    milestoneId: string,
+    acknowledgeUnverified = false,
+  ) =>
     request<Milestone>(
       `/api/v1/client/agreements/${agreementId}/milestones/${milestoneId}/approve`,
       userId,
-      json('POST'),
+      json('POST', { acknowledge_unverified: acknowledgeUnverified }),
     ),
   requestRevision: (
     userId: string,
@@ -246,16 +336,60 @@ export const api = {
     milestoneId: string,
     text: string,
     links: string[],
+    files: File[] = [],
+    criterionIds: string[] = [],
   ) =>
-    request<{
-      ai_report: EvidenceReport;
-      link_checks: LinkCheckFact[];
-      milestone_status: MilestoneStatus;
-    }>(
-      `/api/v1/provider/agreements/${agreementId}/milestones/${milestoneId}/evidence`,
-      userId,
-      json('POST', { text, links: links.filter(Boolean) }),
-    ),
+    {
+      const body = new FormData();
+      body.append('text', text);
+      links.filter(Boolean).forEach((link) => body.append('links', link));
+      criterionIds.forEach((criterionId) => body.append('criterion_ids', criterionId));
+      files.forEach((file) => body.append('files', file, file.name));
+      return request<{
+        evidence_id: string;
+        submission_status: 'SUBMITTED';
+        verification_status: 'ADVISORY';
+        attachments: EvidenceAttachment[];
+        ai_report: EvidenceReport;
+        link_checks: LinkCheckFact[];
+        milestone_status: MilestoneStatus;
+      }>(
+        `/api/v1/provider/agreements/${agreementId}/milestones/${milestoneId}/evidence`,
+        userId,
+        { method: 'POST', body },
+      );
+    },
+  downloadEvidenceAttachment: async (
+    userId: string,
+    evidenceId: string,
+    attachmentId: string,
+  ): Promise<Blob> => {
+    let response: Response;
+    try {
+      response = await fetch(
+        `/api/v1/evidence/${encodeURIComponent(evidenceId)}/attachments/${encodeURIComponent(attachmentId)}`,
+        {
+          headers: {
+            Accept: 'application/octet-stream',
+            'X-User-Id': userId,
+          },
+        },
+      );
+    } catch {
+      throw new ApiError('Cannot reach the Orchestra API. Is the backend running?', 0);
+    }
+    if (!response.ok) {
+      let message = `Request failed (${response.status}).`;
+      try {
+        const body = (await response.json()) as { detail?: unknown };
+        if (typeof body.detail === 'string') message = body.detail;
+      } catch {
+        // Keep the status-based message for non-JSON responses.
+      }
+      throw new ApiError(message, response.status);
+    }
+    return response.blob();
+  },
   submitForReview: (userId: string, agreementId: string, milestoneId: string) =>
     request<Milestone>(
       `/api/v1/provider/agreements/${agreementId}/milestones/${milestoneId}/submit`,
@@ -280,6 +414,12 @@ export const api = {
       userId,
       json('POST'),
     ),
+  simulateMockPayment: (userId: string, invoiceId: string) =>
+    request<{ status: string }>(
+      `/api/v1/payments/invoices/${invoiceId}/simulate-mock-payment`,
+      userId,
+      json('POST'),
+    ),
   auditLogs: (userId: string, agreementId: string) =>
     request<AuditEntry[]>(`/api/v1/agreements/${agreementId}/audit-logs`, userId),
   resetDemo: () =>
@@ -289,6 +429,39 @@ export const api = {
       json('POST'),
     ),
 };
+
+export function parseEvidenceContent(content: string): EvidenceContent {
+  try {
+    const parsed: unknown = JSON.parse(content);
+    if (typeof parsed === 'object' && parsed !== null && 'text' in parsed) {
+      const value = parsed as Record<string, unknown>;
+      return {
+        text: typeof value.text === 'string' ? value.text : '',
+        links: Array.isArray(value.links)
+          ? value.links.filter((item): item is string => typeof item === 'string')
+          : [],
+        criterion_ids: Array.isArray(value.criterion_ids)
+          ? value.criterion_ids.filter((item): item is string => typeof item === 'string')
+          : [],
+        attachments: Array.isArray(value.attachments)
+          ? value.attachments.filter(
+            (item): item is EvidenceAttachment =>
+              typeof item === 'object'
+              && item !== null
+              && 'id' in item
+              && 'name' in item
+              && 'content_type' in item
+              && 'size_bytes' in item
+              && 'inspection_status' in item,
+          )
+          : [],
+      };
+    }
+  } catch {
+    // Older evidence records store plain text.
+  }
+  return { text: content, links: [], criterion_ids: [], attachments: [] };
+}
 
 export function formatMoney(cents: number, currency = 'USD'): string {
   return new Intl.NumberFormat('en-US', {

@@ -85,9 +85,15 @@ const ACTIVITY_COPY: Record<string, { message: string; actor: string }> = {
     actor: 'Provider',
   },
   milestone_approved: { message: 'Milestone approved by client', actor: 'Client' },
+  milestone_approved_with_unverified_criteria: {
+    message: 'Client approved after reviewing criteria not verified by AI',
+    actor: 'Client',
+  },
+  payment_unlocked: { message: 'Payment unlocked after client approval', actor: 'Client' },
   milestone_revision_requested: { message: 'Revision requested', actor: 'Client' },
   invoice_created_or_retried: { message: 'Invoice sent to client', actor: 'PayPal' },
   invoice_status_synchronized: { message: 'Payment status refreshed', actor: 'PayPal' },
+  mock_payment_simulated: { message: 'Mock payment simulated', actor: 'PayPal' },
   paypal_invoice_status_updated: {
     message: 'Payment confirmed by PayPal webhook',
     actor: 'PayPal',

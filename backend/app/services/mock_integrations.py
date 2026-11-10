@@ -25,6 +25,11 @@ class MockPaypalClient:
     def get_invoice(self, invoice_id: str) -> dict[str, Any]:
         if not re.fullmatch(r"MOCK-[A-Fa-f0-9]{12}", invoice_id):
             raise ValueError("Unknown mock invoice.")
+        return {"id": invoice_id, "status": "SENT"}
+
+    def simulate_payment(self, invoice_id: str) -> dict[str, Any]:
+        if not re.fullmatch(r"MOCK-[A-Fa-f0-9]{12}", invoice_id):
+            raise ValueError("Unknown mock invoice.")
         return {"id": invoice_id, "status": "PAID"}
 
     def search_invoices(self, invoice_number: str) -> dict[str, Any]:

@@ -6,7 +6,15 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Agreement, Approval, Milestone, Organization, User
+from app.models import (
+    AcceptanceCriterion,
+    Agreement,
+    Approval,
+    Evidence,
+    Milestone,
+    Organization,
+    User,
+)
 
 
 @pytest.fixture
@@ -59,6 +67,8 @@ def demo_records(db):
     agreement = Agreement(
         id="agreement-1",
         title="E-commerce website",
+        description='{"deadline":"2026-11-11"}',
+        status="ACTIVE",
         total_amount_cents=60000,
         currency="USD",
         client_org_id=client_org.id,
@@ -79,6 +89,23 @@ def demo_records(db):
         approved_by=client_user.id,
         decision="approved",
     )
+    criterion = AcceptanceCriterion(
+        id="criterion-1",
+        milestone=milestone,
+        description="Design files are provided.",
+    )
+    evidence = Evidence(
+        id="evidence-1",
+        milestone=milestone,
+        submitted_by=provider_user.id,
+        evidence_type="submission",
+        content='{"text":"Design files are provided.","links":[]}',
+        ai_report=(
+            '{"criteria_results":[{"criterion":"Design files are provided.",'
+            '"status":"verified","explanation":"Verified."}],'
+            '"overall_verdict":"sufficient"}'
+        ),
+    )
     db.add_all(
         [
             client_org,
@@ -88,6 +115,8 @@ def demo_records(db):
             agreement,
             milestone,
             approval,
+            criterion,
+            evidence,
         ]
     )
     db.commit()
