@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     GROQ_REASONING_EFFORT: str = "low"
     GROQ_INTENT_MAX_COMPLETION_TOKENS: int = 1200
     GROQ_EVIDENCE_MAX_COMPLETION_TOKENS: int = 800
+    EVIDENCE_IMAGE_ANALYSIS: bool | None = None
     GROQ_MAX_RETRIES: int = 2
     GROQ_MAX_RETRY_WAIT_SECONDS: int = 60
     DEMO_MODE: Literal["mock", "real"] = "real"

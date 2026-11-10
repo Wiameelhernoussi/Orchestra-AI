@@ -8,6 +8,7 @@ import { NextStep } from '../../components/NextStep';
 import { StatusBadge } from '../../components/StatusBadge';
 import { useRole } from '../../context/RoleContext';
 import { InvoiceTable } from '../../components/InvoiceTable';
+import { PaymentReadinessPanel } from '../../components/PaymentReadinessPanel';
 import {
   agreementNextStep,
   DESIGN_SAMPLE_PARTIAL,
@@ -134,6 +135,7 @@ function ProviderAgreementDetail() {
             </div>
             <p className="milestone-description">{milestone.description}</p>
             <div className="criteria-block"><h3 className="subsection-title">Acceptance criteria</h3><ul className="plain-list">{milestone.acceptance_criteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ul></div>
+            <PaymentReadinessPanel milestone={milestone} role="provider" />
 
             {milestone.status === 'PENDING' || milestone.status === 'REVISION_REQUESTED' ? (
               <div className="provider-action-row">

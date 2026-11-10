@@ -191,6 +191,11 @@ a { color: inherit; }
 .evidence-attachments h4 span { color: #7c8998; font-size: 8px; font-weight: 400; }
 .evidence-attachments ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .evidence-attachments li { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border: 1px solid #e4eaf0; border-radius: 7px; background: #fff; }
+.evidence-attachments li > .attachment-preview-loading, .evidence-attachments li > .attachment-error, .evidence-attachments li > .evidence-image-preview-wrap { flex: 0 0 100%; }
+.attachment-preview-loading { margin: 4px 0; color: #748397; font-size: 9px; }
+.evidence-image-preview-wrap { margin: 4px 0 0; }
+.evidence-image-preview { display: block; max-width: 100%; max-height: 480px; object-fit: contain; object-position: left center; border: 1px solid #e4eaf0; border-radius: 6px; background: #f7f9fb; }
+.evidence-image-preview-wrap figcaption { margin-top: 4px; color: #748397; font-size: 8px; }
 .attachment-file-icon { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; border-radius: 6px; color: #286c9c; background: #edf5fa; font-size: 7px; font-weight: 800; }
 .attachment-file-info { display: grid; min-width: 0; flex: 1; gap: 2px; }
 .attachment-file-info strong { overflow: hidden; color: #41566b; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
@@ -613,4 +618,46 @@ a { color: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+.payment-readiness-panel { margin: 14px 0 18px; padding: 16px; border: 1px solid #dfe7ed; border-radius: 12px; background: #fbfcfd; }
+.payment-readiness-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.payment-readiness-panel-header h3 { margin: 4px 0 0; color: #233a51; font-size: 15px; }
+.payment-readiness-state { flex: 0 0 auto; padding: 6px 9px; border-radius: 99px; color: #873e34; background: #fff0ed; font-size: 10px; font-weight: 800; }
+.state-ready-for-client-approval, .state-invoice-ready, .state-paid { color: #176b52; background: #eaf8f1; }
+.payment-readiness-checklist { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 16px; margin: 14px 0; padding: 0; list-style: none; }
+.payment-readiness-checklist li { display: flex; align-items: flex-start; gap: 7px; color: #7d5411; font-size: 11px; line-height: 1.45; }
+.payment-readiness-checklist li > span:first-child { flex: 0 0 auto; font-weight: 800; }
+.payment-readiness-checklist li.complete { color: #176b52; }
+.payment-readiness-unverified { display: grid; gap: 3px; margin: 5px 0 0; padding-left: 18px; color: #815619; }
+.payment-readiness-next-action { margin: 12px 0; padding: 10px 12px; border-radius: 8px; color: #344b61; background: #eef4f7; font-size: 12px; line-height: 1.5; }
+.payment-readiness-explanation { border-top: 1px solid #e4eaef; padding-top: 10px; color: #53677b; font-size: 12px; }
+.payment-readiness-explanation summary { width: fit-content; color: #155e79; font-weight: 700; cursor: pointer; }
+.payment-readiness-explanation p { margin: 8px 0 0; line-height: 1.5; }
+.payment-readiness-explanation ul { margin: 8px 0 0; padding-left: 20px; }
+.permission-section { padding-top: 25px; }
+.permission-matrix-scroll { overflow-x: auto; margin-top: 24px; border: 1px solid #dfe7ed; border-radius: 12px; }
+.permission-matrix { width: 100%; min-width: 820px; border-collapse: collapse; background: #fff; text-align: left; }
+.permission-matrix th, .permission-matrix td { padding: 11px 12px; border-bottom: 1px solid #e8edf1; vertical-align: top; font-size: 11px; }
+.permission-matrix thead th { color: #53677b; background: #f2f6f8; font-size: 10px; }
+.permission-matrix tbody th { min-width: 155px; color: #263d53; font-weight: 700; }
+.permission-matrix td { color: #395269; }
+.permission-matrix .permission-ai { color: #805413; }
+.permission-matrix .permission-client { color: #16725c; }
+.permission-matrix .permission-provider { color: #615092; }
+.permission-matrix .permission-system { color: #205e89; }
+.permission-matrix .permission-paypal { color: #15547d; }
+.permission-matrix .permission-empty { color: #9aa8b4; text-align: center; }
+.permission-note { margin: 13px 0 0; color: #52677b; font-size: 12px; line-height: 1.55; }
+.image-analysis { margin-top: 15px; padding: 13px; border: 1px solid #dfe7ed; border-radius: 9px; background: #f8fafb; }
+.image-analysis h4 { margin: 0 0 6px; color: #29445d; font-size: 12px; }
+.image-analysis-attachments, .image-analysis-results { display: grid; gap: 7px; margin: 9px 0; padding: 0; list-style: none; }
+.image-analysis-attachments li, .image-analysis-results li { display: grid; gap: 3px; padding: 8px; border-radius: 7px; background: #fff; font-size: 11px; }
+.image-analysis-attachments li > span { color: #176b52; }
+.image-analysis-attachments li > small, .image-analysis-results li > small { color: #687a8c; }
+.image-analysis-results li > strong { color: #344b61; text-transform: capitalize; }
+.image-analysis-results li > p { margin: 0; color: #53677b; }
+.image-not-analyzed { color: #8a3c32; font-weight: 700; }
+@media (max-width: 700px) {
+  .payment-readiness-checklist { grid-template-columns: 1fr; }
 }

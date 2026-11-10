@@ -1,10 +1,82 @@
 // @vitest-environment jsdom
 
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
 import { AdvisoryCard } from './AdvisoryCard';
 
 describe('AdvisoryCard', () => {
+  afterEach(() => cleanup());
+
+  it('renders analyzed attachment names and per-criterion visual observations', () => {
+    render(
+      <AdvisoryCard
+        report={{
+          overall_verdict: 'partial',
+          report: 'AI assessment only; client approval is required.',
+          criteria_results: [],
+          image_analysis: {
+            status: 'analyzed',
+            message: 'Visual observations are advisory only.',
+            attachments: [{
+              id: 'attachment-1',
+              name: 'home-page.png',
+              content_type: 'image/png',
+              status: 'analyzed',
+              message: 'Image pixels were visually analyzed.',
+            }],
+            criteria_results: [{
+              criterion: 'Home page mockup is included',
+              status: 'visible_in_image',
+              observation: 'A desktop home page mockup is visible.',
+              missing_element: 'Mobile layout is not shown.',
+            }],
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText('home-page.png')).toBeInTheDocument();
+    expect(screen.getByText('Analyzed')).toBeInTheDocument();
+    expect(screen.getByText(/Home page mockup is included · visible in image/i)).toBeInTheDocument();
+    expect(screen.getByText('A desktop home page mockup is visible.')).toBeInTheDocument();
+    expect(screen.getByText('Missing element: Mobile layout is not shown.')).toBeInTheDocument();
+  });
+
+  it('shows visual observations and clearly labels failed image analysis', () => {
+    render(
+      <AdvisoryCard
+        report={{
+          overall_verdict: 'partial',
+          report: 'Text advisory only.',
+          criteria_results: [],
+          image_analysis: {
+            status: 'not_analyzed',
+            message: 'Vision request was rate limited. Image not analyzed.',
+            attachments: [{
+              id: 'attachment-1',
+              name: 'design.png',
+              content_type: 'image/png',
+              status: 'not_analyzed',
+              message: 'The image could not be analyzed.',
+            }],
+            criteria_results: [{
+              criterion: 'Mobile design is included',
+              status: 'cannot_tell',
+              observation: 'No visual assessment is available.',
+              missing_element: 'Image analysis unavailable.',
+            }],
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText('Image not analyzed.')).toBeInTheDocument();
+    expect(screen.getByText('design.png')).toBeInTheDocument();
+    expect(screen.getByText(/Mobile design is included · cannot tell/i)).toBeInTheDocument();
+    expect(screen.getByText(/Links are not inspected beyond reachability/)).toBeInTheDocument();
+    expect(screen.getByText('Missing element: Image analysis unavailable.')).toBeInTheDocument();
+  });
+
   it('shows the human approval gate and criterion-level evidence states', () => {
     render(
       <AdvisoryCard

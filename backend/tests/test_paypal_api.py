@@ -2,6 +2,7 @@ import logging
 
 from app.api.deps import get_paypal_client
 from app.models.invoice import Invoice
+from app.models.milestone import Milestone
 from app.models.webhook import WebhookEvent
 from app.services.paypal.client import PaypalAPIError
 
@@ -134,6 +135,28 @@ def test_invoice_creation_without_approval_is_rejected(api_client, db, demo_reco
     )
 
     assert response.status_code == 409
+
+
+def test_next_milestone_stays_locked_until_previous_is_paid(api_client, db, demo_records):
+    next_milestone = Milestone(
+        id="milestone-2",
+        agreement_id=demo_records["agreement"].id,
+        title="Development",
+        order=2,
+        status="PENDING",
+        amount_cents=35000,
+    )
+    db.add(next_milestone)
+    db.commit()
+
+    response = api_client.post(
+        "/api/v1/provider/agreements/agreement-1/milestones/milestone-2/start",
+        headers={"X-User-Id": "provider-user"},
+    )
+
+    assert response.status_code == 409
+    db.refresh(next_milestone)
+    assert next_milestone.status == "PENDING"
 
 
 def test_invalid_webhook_signature_does_not_change_payment_state(

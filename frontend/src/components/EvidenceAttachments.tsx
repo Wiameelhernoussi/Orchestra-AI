@@ -1,10 +1,55 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, type EvidenceAttachment } from '../api';
 
 function formatBytes(bytes: number): string {
   return bytes >= 1024 * 1024
     ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
     : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function ImagePreview({
+  userId,
+  evidenceId,
+  attachment,
+}: {
+  userId: string;
+  evidenceId: string;
+  attachment: EvidenceAttachment;
+}) {
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    let objectUrl = '';
+
+    void api.downloadEvidenceAttachment(userId, evidenceId, attachment.id)
+      .then((blob) => {
+        if (!active) return;
+        objectUrl = URL.createObjectURL(blob);
+        setPreviewUrl(objectUrl);
+      })
+      .catch((reason: unknown) => {
+        if (active) {
+          setError(reason instanceof Error ? reason.message : 'Image preview could not be loaded.');
+        }
+      });
+
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [attachment.id, evidenceId, userId]);
+
+  if (error) return <p className="attachment-error" role="alert">{error}</p>;
+  if (!previewUrl) return <p className="attachment-preview-loading" role="status">Loading image preview…</p>;
+
+  return (
+    <figure className="evidence-image-preview-wrap">
+      <img className="evidence-image-preview" src={previewUrl} alt={`Submitted evidence: ${attachment.name}`} />
+      <figcaption>Image preview</figcaption>
+    </figure>
+  );
 }
 
 export function EvidenceAttachments({
@@ -46,7 +91,7 @@ export function EvidenceAttachments({
   if (attachments.length === 0) return null;
   return (
     <div className="evidence-attachments">
-      <h4>Attachments <span>stored securely · not inspected by AI</span></h4>
+      <h4>Attachments <span>stored securely · image previews shown below</span></h4>
       <ul>
         {attachments.map((attachment) => (
           <li key={attachment.id}>
@@ -65,6 +110,13 @@ export function EvidenceAttachments({
             >
               {busyId === attachment.id ? 'Downloading…' : 'Download'}
             </button>
+            {['image/png', 'image/jpeg', 'image/webp'].includes(attachment.content_type) && (
+              <ImagePreview
+                userId={userId}
+                evidenceId={evidenceId}
+                attachment={attachment}
+              />
+            )}
           </li>
         ))}
       </ul>

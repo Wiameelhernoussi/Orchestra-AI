@@ -18,6 +18,7 @@ dependencies = [
     "python-dotenv",
     "httpx",
     "python-multipart",
+    "Pillow>=10.3.0",
 ]
 
 [project.optional-dependencies]

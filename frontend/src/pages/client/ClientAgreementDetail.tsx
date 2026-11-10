@@ -8,6 +8,7 @@ import { NextStep } from '../../components/NextStep';
 import { StatusBadge } from '../../components/StatusBadge';
 import { useRole } from '../../context/RoleContext';
 import { InvoiceTable } from '../../components/InvoiceTable';
+import { PaymentReadinessPanel } from '../../components/PaymentReadinessPanel';
 import { activityDescription, agreementNextStep } from '../../presentation';
 
 function ClientAgreementDetail() {
@@ -138,6 +139,7 @@ function ClientAgreementDetail() {
               <ul className="plain-list criteria-plain-list">
                 {milestone.acceptance_criteria.map((criterion) => <li key={criterion}>{criterion}</li>)}
               </ul>
+              <PaymentReadinessPanel milestone={milestone} role="client" />
 
               {milestone.evidence.length > 0 && (
                 <div className="evidence-stack">

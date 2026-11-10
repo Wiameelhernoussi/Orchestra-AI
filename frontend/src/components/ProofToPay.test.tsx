@@ -43,7 +43,14 @@ const milestone: Milestone = {
     next_action: { actor: 'CLIENT', action: 'Review the evidence and approve the milestone.' },
     criteria_summary: { total: 1, verified: 1, unverified: 0, criteria: [] },
     approval_status: 'PENDING',
+    approval_details: null,
     paypal_status: 'NOT_CREATED',
+    webhook_payment_confirmed: false,
+    scope_defined: true,
+    next_milestone_title: null,
+    next_milestone_unlocked: true,
+    client_next_action: 'Review the evidence and approve.',
+    provider_next_action: 'Wait for client review.',
   },
 };
 

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import re
 import shutil
+import warnings
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from fastapi import HTTPException
+from PIL import Image, UnidentifiedImageError
 
 MAX_EVIDENCE_FILE_BYTES = 10 * 1024 * 1024
 MAX_EVIDENCE_TOTAL_BYTES = 20 * 1024 * 1024
@@ -23,6 +26,7 @@ _SUPPORTED_FILES = {
     ),
 }
 _ATTACHMENT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+_MAX_IMAGE_PIXELS = 40_000_000
 
 
 def safe_display_filename(filename: str) -> str:
@@ -56,6 +60,33 @@ def validate_evidence_file(
         raise HTTPException(status_code=422, detail="Attached files cannot be empty.")
     if len(data) > MAX_EVIDENCE_FILE_BYTES:
         raise HTTPException(status_code=413, detail="Each attachment must be 10 MB or smaller.")
+    if expected_content_type in {"image/png", "image/jpeg", "image/webp"}:
+        expected_format = {
+            "image/png": "PNG",
+            "image/jpeg": "JPEG",
+            "image/webp": "WEBP",
+        }[expected_content_type]
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                with Image.open(BytesIO(data)) as image:
+                    if (
+                        image.format != expected_format
+                        or image.width * image.height > _MAX_IMAGE_PIXELS
+                    ):
+                        raise ValueError("Image format or dimensions are invalid.")
+                    image.verify()
+        except (
+            Image.DecompressionBombError,
+            Image.DecompressionBombWarning,
+            UnidentifiedImageError,
+            OSError,
+            ValueError,
+        ) as exc:
+            raise HTTPException(
+                status_code=415,
+                detail="File content does not match its type.",
+            ) from exc
     return {
         "id": uuid4().hex,
         "name": display_name,

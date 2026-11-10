@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useRole } from '../context/RoleContext';
+import { PermissionMatrix } from '../components/PermissionMatrix';
 
 const STEPS = [
   { title: 'Request', actor: 'Client describes the work', icon: '01' },
@@ -135,6 +136,8 @@ function LandingPage() {
             <p className="sandbox-disclosure">Sandbox prototype: standard PayPal invoicing, no escrow.</p>
           </div>
         </section>
+
+        <PermissionMatrix />
 
         <section className="landing-final-cta">
           <div><p className="landing-eyebrow">START WITH YOUR SIDE OF THE STORY</p><h2>Make the next project clearer.</h2></div>

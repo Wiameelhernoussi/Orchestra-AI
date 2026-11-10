@@ -27,6 +27,23 @@ export interface EvidenceReport {
   overall_verdict: 'sufficient' | 'partial' | 'insufficient';
   report: string;
   revision_request_draft?: string;
+  image_analysis?: {
+    status: 'analyzed' | 'not_analyzed' | 'mock' | 'disabled';
+    message: string;
+    attachments: {
+      id: string;
+      name: string;
+      content_type: string;
+      status: 'analyzed' | 'not_analyzed' | 'mock_canned';
+      message: string;
+    }[];
+    criteria_results: {
+      criterion: string;
+      status: 'visible_in_image' | 'not_visible' | 'cannot_tell';
+      observation: string;
+      missing_element: string;
+    }[];
+  };
 }
 
 export interface CriterionQuality {
@@ -52,7 +69,7 @@ export interface EvidenceAttachment {
   name: string;
   content_type: string;
   size_bytes: number;
-  inspection_status: 'not_inspected_by_ai';
+  inspection_status: 'not_inspected_by_ai' | 'analyzed' | 'not_analyzed' | 'mock_canned';
 }
 
 export interface EvidenceContent {
@@ -116,7 +133,18 @@ export interface PaymentReadiness {
     criteria: { criterion: string; status: 'verified' | 'not_verifiable' | 'missing' }[];
   };
   approval_status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  approval_details: {
+    approver_name: string;
+    approved_at: string | null;
+    advisory_overridden: boolean;
+  } | null;
   paypal_status: string;
+  webhook_payment_confirmed: boolean;
+  scope_defined: boolean;
+  next_milestone_title: string | null;
+  next_milestone_unlocked: boolean;
+  client_next_action: string;
+  provider_next_action: string;
 }
 
 export interface Milestone {

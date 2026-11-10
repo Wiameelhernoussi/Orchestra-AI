@@ -48,6 +48,51 @@ export function AdvisoryCard({
             ))}
           </ul>
         )}
+        {report.image_analysis && (
+          <div className="image-analysis" aria-label="Image evidence analysis">
+            <h4>Image evidence · advisory only</h4>
+            <p className="muted small-copy">{report.image_analysis.message}</p>
+            {report.image_analysis.status === 'not_analyzed'
+              && report.image_analysis.attachments.some((attachment) => (
+                attachment.content_type === 'image/png'
+                || attachment.content_type === 'image/jpeg'
+              )) && (
+              <p className="image-not-analyzed" role="status">Image not analyzed.</p>
+            )}
+            {report.image_analysis.attachments.length > 0 && (
+              <ul className="image-analysis-attachments">
+                {report.image_analysis.attachments.map((attachment) => (
+                  <li key={attachment.id}>
+                    <strong>{attachment.name}</strong>
+                    <span>{attachment.status === 'analyzed'
+                      ? 'Analyzed'
+                      : attachment.status === 'mock_canned'
+                        ? 'Mock canned response · pixels not analyzed'
+                        : attachment.content_type === 'image/png' || attachment.content_type === 'image/jpeg'
+                          ? 'Image not analyzed'
+                          : 'Attachment contents not analyzed'}</span>
+                    <small>{attachment.message}</small>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {report.image_analysis.criteria_results.length > 0 && (
+              <ul className="image-analysis-results">
+                {report.image_analysis.criteria_results.map((item) => (
+                  <li key={item.criterion}>
+                    <strong>{item.criterion} · {item.status.replace(/_/g, ' ')}</strong>
+                    <p>{item.observation}</p>
+                    {item.missing_element && <small>Missing element: {item.missing_element}</small>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="small-copy">
+              Images provide visual observations only and do not verify authenticity or functionality.
+              Links are not inspected beyond reachability and limited metadata.
+            </p>
+          </div>
+        )}
         {report.report && <p className="advisory-report">{report.report}</p>}
         {linkFacts.length > 0 && (
           <div className="link-facts">

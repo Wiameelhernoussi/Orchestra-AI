@@ -39,10 +39,12 @@ from app.services.groq_agents import (
     AgentResult,
     CompletionProvider,
     EvidenceAgent,
+    GroqAPIError,
     GroqRateLimitError,
     IntentAgent,
 )
 from app.services.evidence_facts import EvidenceFactChecker
+from app.services.image_evidence import prepare_images_for_analysis
 from app.services.evidence_storage import (
     MAX_EVIDENCE_FILE_BYTES,
     MAX_EVIDENCE_FILES,
@@ -885,6 +887,15 @@ async def submit_evidence(
         {key: value for key, value in item.items() if key != "_data"}
         for item in prepared_attachments
     ]
+    link_checks = fact_checker.check_links(links)
+    criteria = [criterion.description for criterion in milestone.criteria]
+    evidence_agent = EvidenceAgent(
+        provider,
+        model=settings.GROQ_EVIDENCE_MODEL,
+        fallback_model=settings.GROQ_EVIDENCE_FALLBACK_MODEL,
+        max_completion_tokens=settings.GROQ_EVIDENCE_MAX_COMPLETION_TOKENS,
+        reasoning_effort=settings.GROQ_REASONING_EFFORT,
+    )
     evidence_content = json.dumps(
         {
             "text": content,
@@ -895,16 +906,8 @@ async def submit_evidence(
         ensure_ascii=True,
         separators=(",", ":"),
     )
-    link_checks = fact_checker.check_links(links)
-    criteria = [criterion.description for criterion in milestone.criteria]
     try:
-        assessment = EvidenceAgent(
-            provider,
-            model=settings.GROQ_EVIDENCE_MODEL,
-            fallback_model=settings.GROQ_EVIDENCE_FALLBACK_MODEL,
-            max_completion_tokens=settings.GROQ_EVIDENCE_MAX_COMPLETION_TOKENS,
-            reasoning_effort=settings.GROQ_REASONING_EFFORT,
-        ).assess(
+        assessment = evidence_agent.assess(
             criteria,
             evidence_content,
             trusted_facts=link_checks,
@@ -921,6 +924,137 @@ async def submit_evidence(
     except RuntimeError as exc:
         logger.warning("evidence_assessment_failed error_type=%s", type(exc).__name__)
         raise HTTPException(status_code=502, detail="Evidence assessment failed.") from exc
+
+    image_attachments = [
+        item
+        for item in prepared_attachments
+        if item.get("content_type") in {"image/png", "image/jpeg"}
+    ]
+    image_inputs, skipped_images = prepare_images_for_analysis(prepared_attachments)
+    image_analysis: dict[str, Any] | None = None
+    image_status_by_id: dict[str, str] = {}
+    if attachment_metadata:
+        image_results: list[dict[str, Any]] = []
+        is_mock = settings.DEMO_MODE == "mock"
+        image_analysis_enabled = (
+            settings.EVIDENCE_IMAGE_ANALYSIS
+            if settings.EVIDENCE_IMAGE_ANALYSIS is not None
+            else settings.DEMO_MODE != "mock"
+        )
+        if not image_attachments:
+            image_status = "not_analyzed"
+            message = "No PNG/JPEG images were attached; other file types were not inspected."
+        elif not image_inputs:
+            image_status = "not_analyzed"
+            message = "Image decoding failed; image not analyzed."
+        elif is_mock:
+            image_status = "mock"
+            message = (
+                "Mock mode canned analysis only; image pixels were not analyzed "
+                "and this is not a real visual assessment."
+            )
+            image_results = [
+                {
+                    "criterion": criterion,
+                    "status": "cannot_tell",
+                    "observation": "Mock mode canned output; image pixels were not analyzed.",
+                    "missing_element": "Real visual inspection is unavailable in mock mode.",
+                }
+                for criterion in criteria
+            ]
+            for image in image_inputs:
+                image_status_by_id[image["id"]] = "mock_canned"
+        elif not image_analysis_enabled:
+            image_status = "not_analyzed"
+            message = "Image analysis is disabled by EVIDENCE_IMAGE_ANALYSIS."
+        elif image_inputs:
+            try:
+                image_results = evidence_agent.analyze_images(criteria, image_inputs)[
+                    "criteria_results"
+                ]
+                image_status = "analyzed"
+                message = (
+                    "Visual observations are advisory only; they do not prove "
+                    "authenticity or functionality. Linked page contents are not inspected."
+                )
+                for image in image_inputs:
+                    image_status_by_id[image["id"]] = "analyzed"
+                assessment.data["report"] = assessment.data["report"].replace(
+                    "uploaded file contents, including images and PDFs",
+                    "PDF contents or unsupported files",
+                ).replace(
+                    "uploaded file contents",
+                    "PDF contents or unsupported files",
+                )
+            except (GroqAPIError, RuntimeError, ValueError, TypeError, KeyError) as exc:
+                image_status = "not_analyzed"
+                message = (
+                    "Image analysis failed; the text-only advisory is shown instead. "
+                    "Image not analyzed."
+                )
+                logger.warning(
+                    "evidence_image_analysis_failed error_type=%s status_code=%s",
+                    type(exc).__name__,
+                    getattr(exc, "status_code", None) or "none",
+                )
+        else:
+            image_status = "not_analyzed"
+            message = "No supported PNG/JPEG image could be analyzed. Image not analyzed."
+
+        attachment_results: list[dict[str, str]] = []
+        for item in prepared_attachments:
+            attachment_id = str(item.get("id", ""))
+            current_status = image_status_by_id.get(attachment_id)
+            if current_status is None:
+                skipped = next(
+                    (entry for entry in skipped_images if entry["id"] == attachment_id),
+                    None,
+                )
+                current_status = "not_analyzed"
+                attachment_message = (
+                    skipped["message"]
+                    if skipped
+                    else "Only PNG/JPEG images are analyzed; this attachment was not inspected."
+                )
+            elif current_status == "mock_canned":
+                attachment_message = "Mock canned analysis; image pixels were not inspected."
+            elif current_status == "analyzed":
+                attachment_message = "Image pixels were visually analyzed for advisory observations."
+            else:
+                attachment_message = message
+            item["inspection_status"] = current_status
+            attachment_results.append(
+                {
+                    "id": attachment_id,
+                    "name": str(item.get("name", "attachment")),
+                    "content_type": str(item.get("content_type", "application/octet-stream")),
+                    "status": current_status,
+                    "message": attachment_message,
+                }
+            )
+        image_analysis = {
+            "status": image_status,
+            "message": message,
+            "attachments": attachment_results,
+            "criteria_results": image_results,
+        }
+        for item in attachment_metadata:
+            item["inspection_status"] = image_status_by_id.get(
+                str(item.get("id", "")), "not_analyzed"
+            )
+
+    evidence_content = json.dumps(
+        {
+            "text": content,
+            "links": links,
+            "criterion_ids": criterion_ids,
+            "attachments": attachment_metadata,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    if image_analysis is not None:
+        assessment.data["image_analysis"] = image_analysis
 
     evidence_id = str(uuid4())
     try:

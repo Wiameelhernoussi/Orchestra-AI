@@ -26,6 +26,10 @@ describe('LandingPage', () => {
     }
     expect(screen.getByText('AI advises. Humans decide. PayPal settles. Everything is traced.')).toBeTruthy();
     expect(screen.getByText('Sandbox prototype: standard PayPal invoicing, no escrow.')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Who does what' })).toBeTruthy();
+    expect(screen.getByRole('table', { name: /permission matrix/i })).toBeTruthy();
+    expect(screen.getByText('Creates after recorded client approval')).toBeTruthy();
+    expect(screen.getByText(/AI never approves work, creates invoices, or confirms payment/)).toBeTruthy();
     expect(screen.getAllByRole('link', { name: /Try as Client/ })[0]).toHaveAttribute('href', '/client');
     expect(screen.getAllByRole('link', { name: /Try as Provider/ })[0]).toHaveAttribute('href', '/provider');
     expect(screen.getByText(/From intent to agreement\. From evidence to approval\./)).toBeTruthy();

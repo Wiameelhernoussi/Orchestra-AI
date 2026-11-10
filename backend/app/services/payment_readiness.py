@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.models import Agreement, Approval, Evidence, Invoice, Milestone, User
+from app.models import Agreement, Approval, AuditLog, Evidence, Invoice, Milestone, User
 from app.state_machine.agreement_fsm import AgreementStatus
 from app.state_machine.milestone_fsm import MilestoneStatus
 
@@ -42,6 +42,28 @@ def _deadline_defined(agreement: Agreement | None) -> bool:
         return False
     deadline = description.get("deadline") if isinstance(description, dict) else None
     return isinstance(deadline, str) and bool(deadline.strip())
+
+
+def _scope_defined(
+    agreement: Agreement | None,
+    milestone: Milestone,
+    criteria_defined: bool,
+) -> bool:
+    if agreement is None or not agreement.title.strip():
+        return False
+    try:
+        description = json.loads(agreement.description or "{}")
+    except json.JSONDecodeError:
+        description = {}
+    requirements = description.get("requirements") if isinstance(description, dict) else None
+    return bool(
+        (
+            isinstance(requirements, list)
+            and any(isinstance(item, str) and item.strip() for item in requirements)
+        )
+        or (isinstance(milestone.description, str) and milestone.description.strip())
+        or criteria_defined
+    )
 
 
 def calculate_payment_readiness(
@@ -111,6 +133,7 @@ def calculate_payment_readiness(
     approval_status = "PENDING"
     human_approved = False
     client_acknowledged_unverified = False
+    approval_details = None
     if latest_approval:
         approval, approver = latest_approval
         try:
@@ -131,6 +154,13 @@ def calculate_payment_readiness(
                 isinstance(approval_notes, dict)
                 and approval_notes.get("acknowledged_unverified") is True
             )
+            approval_details = {
+                "approver_name": approver.name,
+                "approved_at": approval.created_at.isoformat()
+                if approval.created_at
+                else None,
+                "advisory_overridden": client_acknowledged_unverified,
+            }
 
     invoice = (
         db.query(Invoice)
@@ -139,6 +169,27 @@ def calculate_payment_readiness(
         .first()
     )
     paypal_status = invoice.status if invoice else "NOT_CREATED"
+    webhook_payment_confirmed = False
+    if invoice is not None:
+        paid_webhook = (
+            db.query(AuditLog)
+            .filter(
+                AuditLog.entity_type == "invoice",
+                AuditLog.entity_id == invoice.id,
+                AuditLog.action == "paypal_invoice_status_updated",
+            )
+            .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+            .first()
+        )
+        if paid_webhook:
+            try:
+                webhook_details = json.loads(paid_webhook.details or "{}")
+            except json.JSONDecodeError:
+                webhook_details = {}
+            webhook_payment_confirmed = (
+                isinstance(webhook_details, dict)
+                and webhook_details.get("status") == "PAID"
+            )
     payment_confirmed = (
         milestone.status == MilestoneStatus.PAID.value
         or paypal_status == "PAID"
@@ -157,7 +208,21 @@ def calculate_payment_readiness(
     criteria_defined = bool(criteria) and all(
         criterion.description.strip() for criterion in criteria
     )
+    scope_defined = _scope_defined(agreement, milestone, criteria_defined)
     review_submitted = milestone.status in _REVIEW_SUBMITTED_STATUSES
+    next_milestone = (
+        db.query(Milestone)
+        .filter(
+            Milestone.agreement_id == milestone.agreement_id,
+            Milestone.order > milestone.order,
+        )
+        .order_by(Milestone.order.asc())
+        .first()
+    )
+    next_milestone_unlocked = (
+        next_milestone is None
+        or next_milestone.status != MilestoneStatus.PENDING.value
+    )
 
     checks = [
         {"key": "agreement_valid", "label": "Active work agreement", "complete": agreement_valid, "required": True},
@@ -286,6 +351,36 @@ def calculate_payment_readiness(
     else:
         next_action = {"actor": "SYSTEM", "action": "Resolve the milestone state before invoicing."}
 
+    client_next_action = next_action["action"]
+    if status == "READY_FOR_APPROVAL":
+        client_next_action = "Review the evidence, then approve the milestone or request a revision."
+    elif status == "BLOCKED" and not evidence:
+        client_next_action = "Wait for the provider to submit evidence for this milestone."
+    provider_next_action = next_action["action"]
+    if status == "READY_FOR_APPROVAL":
+        provider_next_action = "Evidence is submitted; wait for the client to review and decide."
+    elif status == "READY_FOR_PAYMENT":
+        provider_next_action = "Client approval is recorded; wait for the client to create the PayPal invoice."
+    elif status == "INVOICE_SENT":
+        provider_next_action = "The invoice is sent; wait for the client to complete payment."
+    elif status == "PAID":
+        provider_next_action = (
+            f"Payment is complete; {next_milestone.title} is unlocked."
+            if next_milestone
+            else "All milestones are paid; the agreement is complete."
+        )
+    elif evidence and not criteria_satisfied and not client_acknowledged_unverified:
+        missing_criteria = [
+            item["criterion"]
+            for item in criteria_results
+            if item["status"] != "verified"
+        ]
+        provider_next_action = (
+            "Submit additional evidence for: " + "; ".join(missing_criteria)
+            if missing_criteria
+            else "Submit additional evidence for the acceptance criteria."
+        )
+
     return {
         "status": status,
         "score": score,
@@ -309,7 +404,14 @@ def calculate_payment_readiness(
             "criteria": criteria_results,
         },
         "approval_status": approval_status,
+        "approval_details": approval_details,
         "paypal_status": paypal_status,
+        "webhook_payment_confirmed": webhook_payment_confirmed,
+        "scope_defined": scope_defined,
+        "next_milestone_title": next_milestone.title if next_milestone else None,
+        "next_milestone_unlocked": next_milestone_unlocked,
+        "client_next_action": client_next_action,
+        "provider_next_action": provider_next_action,
     }
 
 

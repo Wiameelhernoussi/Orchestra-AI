@@ -38,12 +38,37 @@ The AI labels its results advisory, and client approval remains required.
 - **AI:** Groq behind an injectable provider interface. The demo has a
   deterministic mock provider; the real Intent Agent uses GPT-OSS 120B and the
   Evidence Agent uses Qwen 3.8 27B with GPT-OSS 20B fallback.
+  Real-mode PNG/JPEG attachments can receive separate advisory image analysis
+  with Qwen 3.8 27B; images are re-encoded as JPEG at up to 768 px and at most
+  two are sent per request. Image contents are treated as untrusted data.
+  The request uses Groq's documented
+  [`image_url` data-URL format](https://console.groq.com/docs/vision).
+  `EVIDENCE_IMAGE_ANALYSIS` defaults on in real mode and off in mock mode;
+  mock mode returns an explicitly labeled canned result without sending images.
 - **Payments:** Standard PayPal Invoicing API and verified webhooks in Sandbox.
   Mock mode uses a fake payment client and never contacts PayPal.
 - **Workflow:** Plain-code state machines enforce roles, client approval, and
   sequential milestones. A deterministic Payment Readiness Engine derives
   blockers from persisted agreement, evidence, approval, and invoice records;
   invoice creation rechecks eligibility on the backend.
+
+## Permission matrix
+
+| Action | AI | Provider | Client | System | PayPal |
+|---|---|---|---|---|---|
+| Structure the request | Structures intent | — | Supplies request | Runs agent | — |
+| Create agreement proposal | — | — | Submits proposal | Stores proposal | — |
+| Submit evidence | — | Submits | — | Stores submission | — |
+| Analyze evidence | Advisory only | — | — | Runs and stores advisory | — |
+| Request revision | — | — | Requests | Records request | — |
+| Approve work | — | — | Human decision | Records approval | — |
+| Create invoice | — | — | Requests | Creates after recorded client approval | — |
+| Authorize payment | — | — | Pays invoice | — | Processes payment |
+| Confirm payment | — | — | — | Records verified status | Reports status / webhook |
+
+Invoice creation is server-side and requires a recorded client approval. The AI
+never approves work, creates invoices, or confirms payment. Payment state is
+updated from a verified PayPal webhook or a status read from PayPal.
 
 ## Quick setup: mock mode
 
@@ -141,6 +166,7 @@ The complete variable list and safe placeholders are in
 | `GROQ_INTENT_MODEL` | Intent model (default `openai/gpt-oss-120b`) |
 | `GROQ_EVIDENCE_MODEL` | Evidence model (default `qwen/qwen3.8-27b`) |
 | `GROQ_EVIDENCE_FALLBACK_MODEL` | Evidence fallback (default `openai/gpt-oss-20b`) |
+| `EVIDENCE_IMAGE_ANALYSIS` | Enable real-mode PNG/JPEG image analysis (defaults on in real mode; no external image call in mock mode) |
 | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | PayPal Sandbox REST app credentials |
 | `PAYPAL_WEBHOOK_ID` | Sandbox webhook identifier for signature verification |
 | `DEMO_CLIENT_PAYPAL_EMAIL` | Sandbox Personal payer email used for invoices |
@@ -168,6 +194,9 @@ npm test
 
 - **Not escrow:** this application creates ordinary PayPal invoices and does
   not hold funds.
+- **Image analysis is advisory:** PNG/JPEG observations do not prove
+  authenticity or functionality. Other file contents are not analyzed, and
+  links are not inspected beyond reachability and limited metadata.
 - **Not a legal contract:** agreements are structured project records, not
   legally binding documents or e-signatures.
 - **Demo authentication only:** `X-User-Id` identifies seeded demo users; it
