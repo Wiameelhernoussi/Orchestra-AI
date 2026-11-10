@@ -95,6 +95,11 @@ COMPLETE_EVIDENCE_RESULT = {
             "explanation": "Evidence provided.",
         },
         {
+            "criterion": "A public HTTPS design preview URL is provided and returns HTTP 2xx.",
+            "status": "verified",
+            "explanation": "The submitted public HTTPS preview URL returned HTTP 2xx.",
+        },
+        {
             "criterion": "A public HTTPS staging URL is provided and returns HTTP 2xx.",
             "status": "verified",
             "explanation": "Evidence provided.",
@@ -272,6 +277,7 @@ def test_demo_seed_has_verifiable_acceptance_criteria(api_client):
     assert set(agreement["milestones"][0]["acceptance_criteria"]) == {
         "Mockups for the Home, Catalog, Product, Cart, and Account pages are included in the submitted files.",
         "A style guide is included in the submitted files.",
+        "A public HTTPS design preview URL is provided and returns HTTP 2xx.",
     }
     assert set(agreement["milestones"][1]["acceptance_criteria"]) == {
         "A public HTTPS staging URL is provided and returns HTTP 2xx.",
@@ -287,6 +293,9 @@ def test_mock_mode_evidence_loop_produces_partial_then_sufficient_advisory(api_c
     api_client.app.dependency_overrides[get_settings] = lambda: Settings(
         DEMO_MODE="mock",
         DEMO_SEED_TOKEN="",
+    )
+    api_client.app.dependency_overrides[get_evidence_fact_checker] = (
+        lambda: EmptyFactChecker()
     )
     demo = api_client.post("/api/v1/demo/seed").json()
     provider_headers = _headers(demo["provider_user_id"])
@@ -320,8 +329,10 @@ def test_mock_mode_evidence_loop_produces_partial_then_sufficient_advisory(api_c
             "text": (
                 "Mockups for the Home, Catalog, Product, Cart, and Account pages "
                 "are included in the submitted files. A style guide is included "
-                "in the submitted files."
-            )
+                "in the submitted files. A public HTTPS design preview URL is "
+                "provided and returns HTTP 2xx: https://public.example.test/design."
+            ),
+            "links": ["https://public.example.test/design"],
         },
     )
 
@@ -343,6 +354,9 @@ def test_mock_mode_evidence_loop_produces_partial_then_sufficient_advisory(api_c
 def test_mock_mode_seeds_and_completes_demo_without_external_credentials(api_client):
     settings = Settings(DEMO_MODE="mock", DEMO_SEED_TOKEN="")
     api_client.app.dependency_overrides[get_settings] = lambda: settings
+    api_client.app.dependency_overrides[get_evidence_fact_checker] = (
+        lambda: EmptyFactChecker()
+    )
     seeded = api_client.post("/api/v1/demo/seed")
     assert seeded.status_code == 200
     demo = seeded.json()
@@ -367,8 +381,10 @@ def test_mock_mode_seeds_and_completes_demo_without_external_credentials(api_cli
             "text": (
                 "Mockups for the Home, Catalog, Product, Cart, and Account pages "
                 "are included in the submitted files. A style guide is included "
-                "in the submitted files."
-            )
+                "in the submitted files. A public HTTPS design preview URL is "
+                "provided and returns HTTP 2xx: https://public.example.test/design."
+            ),
+            "links": ["https://public.example.test/design"],
         },
     )
     assert evidence.status_code == 200

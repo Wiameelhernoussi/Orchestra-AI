@@ -141,7 +141,10 @@ verified webhook events or the explicit PayPal invoice-sync fallback.
    request, analyze it, check missing information and proposed milestone
    criteria, then propose the agreement.
 2. Switch to **Provider**, accept the proposal, start **Design**, submit a
-   description and any evidence links, then submit it for review.
+   description and any evidence links, then submit it for review. The seeded
+   Design milestone includes visual file criteria and a public HTTPS preview
+   reachability criterion; link checks confirm reachability only, not visual
+   quality or criterion compliance.
 3. Switch to **Client**. Review the deterministic link facts and the Evidence
    Agent's advisory report. Edit the revision-request draft if needed. Approve
    the deliverable explicitly.

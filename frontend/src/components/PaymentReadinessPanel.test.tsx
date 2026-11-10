@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { Milestone } from '../api';
 import { PaymentReadinessPanel } from './PaymentReadinessPanel';
 
@@ -47,6 +47,8 @@ const milestone: Milestone = {
 };
 
 describe('PaymentReadinessPanel', () => {
+  afterEach(() => cleanup());
+
   it('explains blockers, checklist status, and provider-specific next action', () => {
     render(<PaymentReadinessPanel milestone={milestone} role="provider" />);
 
@@ -58,5 +60,28 @@ describe('PaymentReadinessPanel', () => {
     fireEvent.click(screen.getByText('Why is payment blocked?'));
     expect(screen.getByText('Evidence has not been submitted.')).toBeInTheDocument();
     expect(screen.getByText('Design files are provided. (missing)')).toBeInTheDocument();
+  });
+
+  it('shows paid milestones as complete and next milestone unlocked without blocker details', () => {
+    const paidMilestone: Milestone = {
+      ...milestone,
+      status: 'PAID',
+      payment_readiness: {
+        ...milestone.payment_readiness,
+        status: 'PAID',
+        score: 75,
+        next_milestone_title: 'Development',
+        next_milestone_unlocked: true,
+        paypal_status: 'PAID',
+      },
+    };
+
+    render(<PaymentReadinessPanel milestone={paidMilestone} role="client" />);
+
+    expect(screen.getByText('100% complete')).toBeInTheDocument();
+    const nextMilestone = screen.getByText('Next milestone: unlocked · Development');
+    expect(nextMilestone.closest('li')).toHaveClass('complete');
+    expect(screen.queryByText('Why is payment blocked?')).not.toBeInTheDocument();
+    expect(screen.queryByText(/75% complete/)).not.toBeInTheDocument();
   });
 });

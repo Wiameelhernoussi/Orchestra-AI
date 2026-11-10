@@ -35,6 +35,7 @@ export function PaymentReadinessPanel({
 }) {
   const readiness = milestone.payment_readiness;
   const state = milestoneState(milestone);
+  const nextMilestoneUnlocked = state === 'PAID' || readiness.next_milestone_unlocked;
   const webhookText = readiness.webhook_payment_confirmed
     ? 'Confirmed by verified PayPal webhook'
     : readiness.paypal_status === 'PAID'
@@ -52,7 +53,7 @@ export function PaymentReadinessPanel({
           <h3>{state}</h3>
         </div>
         <span className={`payment-readiness-state state-${state.toLowerCase().replace(/ /g, '-')}`}>
-          {readiness.score}% complete
+          {state === 'PAID' ? 100 : readiness.score}% complete
         </span>
       </header>
 
@@ -105,10 +106,12 @@ export function PaymentReadinessPanel({
           <span aria-hidden="true">{readiness.webhook_payment_confirmed ? '✓' : '○'}</span>
           {webhookText}
         </li>
-        <li className={readiness.next_milestone_unlocked ? 'complete' : 'pending'}>
-          <span aria-hidden="true">{readiness.next_milestone_unlocked ? '✓' : '○'}</span>
+        <li className={nextMilestoneUnlocked ? 'complete' : 'pending'}>
+          <span aria-hidden="true">{nextMilestoneUnlocked ? '✓' : '○'}</span>
           {readiness.next_milestone_title
-            ? `Next milestone · ${readiness.next_milestone_title} ${readiness.next_milestone_unlocked ? 'unlocked' : 'locked until this one is paid'}`
+            ? nextMilestoneUnlocked
+              ? `Next milestone: unlocked · ${readiness.next_milestone_title}`
+              : `Next milestone · ${readiness.next_milestone_title} locked until this one is paid`
             : 'No next milestone'}
         </li>
       </ul>
@@ -118,10 +121,12 @@ export function PaymentReadinessPanel({
         {role === 'client' ? readiness.client_next_action : readiness.provider_next_action}
       </p>
 
-      <details className="payment-readiness-explanation">
-        <summary>Why is payment blocked?</summary>
-        <p>{whyBlocked(milestone, state)}</p>
-      </details>
+      {state !== 'PAID' && (
+        <details className="payment-readiness-explanation">
+          <summary>Why is payment blocked?</summary>
+          <p>{whyBlocked(milestone, state)}</p>
+        </details>
+      )}
     </section>
   );
 }

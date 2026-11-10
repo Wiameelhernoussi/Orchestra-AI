@@ -1327,6 +1327,7 @@ def seed_demo(
             [
                 "Mockups for the Home, Catalog, Product, Cart, and Account pages are included in the submitted files.",
                 "A style guide is included in the submitted files.",
+                "A public HTTPS design preview URL is provided and returns HTTP 2xx.",
             ],
         ),
         (

@@ -221,6 +221,7 @@ def calculate_payment_readiness(
     )
     next_milestone_unlocked = (
         next_milestone is None
+        or payment_confirmed
         or next_milestone.status != MilestoneStatus.PENDING.value
     )
 
@@ -288,7 +289,7 @@ def calculate_payment_readiness(
         blocking_reasons.append("The milestone is not in an invoice-eligible state.")
 
     required_checks = [check for check in checks if check["required"]]
-    score = round(
+    score = 100 if payment_confirmed else round(
         100 * sum(check["complete"] for check in required_checks) / len(required_checks)
     )
     completed_checks = [

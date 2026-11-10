@@ -1,6 +1,6 @@
 import json
 
-from app.models import Approval, AuditLog, Evidence, Invoice, User
+from app.models import Approval, AuditLog, Evidence, Invoice, Milestone, User
 from app.services.payment_readiness import calculate_payment_readiness
 
 
@@ -123,6 +123,29 @@ def test_readiness_endpoint_returns_authoritative_state(api_client, demo_records
     assert response.json()["next_milestone_unlocked"] is True
     assert isinstance(response.json()["client_next_action"], str)
     assert isinstance(response.json()["provider_next_action"], str)
+
+
+def test_paid_milestone_is_fully_complete_and_unlocks_next_milestone(demo_records):
+    db = demo_records["db"]
+    milestone = demo_records["milestone"]
+    milestone.status = "PAID"
+    next_milestone = Milestone(
+        id="milestone-2",
+        agreement_id=demo_records["agreement"].id,
+        title="Development",
+        order=2,
+        status="PENDING",
+        amount_cents=35000,
+    )
+    db.add(next_milestone)
+    db.commit()
+
+    readiness = calculate_payment_readiness(db, milestone)
+
+    assert readiness["status"] == "PAID"
+    assert readiness["score"] == 100
+    assert readiness["next_milestone_title"] == "Development"
+    assert readiness["next_milestone_unlocked"] is True
 
 
 def test_readiness_marks_only_paid_webhook_as_webhook_confirmation(db, demo_records):
