@@ -25,6 +25,14 @@ const PERMISSIONS: {
     actors: { Client: 'Pays invoice', PayPal: 'Processes payment' },
   },
   {
+    action: 'Generate payment QR',
+    actors: { Client: 'Requests display', System: 'Restricts to invoice client', PayPal: 'Generates code' },
+  },
+  {
+    action: 'Send payment reminder',
+    actors: { Provider: 'Requests reminder', System: 'Rate limits and audits', PayPal: 'Sends reminder' },
+  },
+  {
     action: 'Confirm payment',
     actors: { System: 'Records verified status', PayPal: 'Reports status / webhook' },
   },
@@ -33,39 +41,44 @@ const PERMISSIONS: {
 export function PermissionMatrix() {
   return (
     <section className="landing-section permission-section" aria-labelledby="permission-heading">
-      <div className="section-heading-landing">
-        <div>
-          <p className="landing-eyebrow dark-eyebrow">CLEAR RESPONSIBILITIES</p>
-          <h2 id="permission-heading">Who does what</h2>
-        </div>
-        <p>AI advises; people make the decisions; the server enforces the payment gates.</p>
-      </div>
-      <div className="permission-matrix-scroll">
-        <table className="permission-matrix" aria-label="Permission matrix: actions and responsible actors">
-          <thead>
-            <tr>
-              <th scope="col">Action</th>
-              {ACTORS.map((actor) => <th scope="col" key={actor}>{actor}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {PERMISSIONS.map(({ action, actors }) => (
-              <tr key={action}>
-                <th scope="row">{action}</th>
-                {ACTORS.map((actor) => (
-                  <td key={actor} className={actors[actor] ? `permission-${actor.toLowerCase()}` : 'permission-empty'}>
-                    {actors[actor] ?? '—'}
-                  </td>
-                ))}
+      <details className="permission-matrix-details">
+        <summary id="permission-heading">
+          <span>Permissions</span>
+          <span className="permission-visual" aria-label="AI advises, people decide, system enforces, PayPal processes">
+            <span className="permission-visual-ai">AI advises</span>
+            <span className="permission-visual-people">People decide</span>
+            <span className="permission-visual-system">System enforces gates</span>
+            <span className="permission-visual-paypal">PayPal processes</span>
+          </span>
+          <span className="permission-expand-label">View full matrix</span>
+        </summary>
+        <div className="permission-matrix-scroll">
+          <table className="permission-matrix" aria-label="Permission matrix: actions and responsible actors">
+            <thead>
+              <tr>
+                <th scope="col">Action</th>
+                {ACTORS.map((actor) => <th scope="col" key={actor}>{actor}</th>)}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="permission-note">
-        Invoice creation is a server-side step and requires recorded client approval. The AI never approves work,
-        creates invoices, or confirms payment.
-      </p>
+            </thead>
+            <tbody>
+              {PERMISSIONS.map(({ action, actors }) => (
+                <tr key={action}>
+                  <th scope="row">{action}</th>
+                  {ACTORS.map((actor) => (
+                    <td key={actor} className={actors[actor] ? `permission-${actor.toLowerCase()}` : 'permission-empty'}>
+                      {actors[actor] ?? '—'}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="permission-note">
+          Invoices require recorded client approval. AI never approves, creates invoices, or confirms payment.
+          QR display is client-only; reminders are provider-only and rate limited.
+        </p>
+      </details>
     </section>
   );
 }

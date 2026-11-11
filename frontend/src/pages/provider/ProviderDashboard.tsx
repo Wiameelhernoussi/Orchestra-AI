@@ -3,6 +3,7 @@ import { api, type Agreement } from '../../api';
 import { NextStep } from '../../components/NextStep';
 import { useRole } from '../../context/RoleContext';
 import { AgreementCards } from '../../components/AgreementCards';
+import { PaymentTotalsStrip } from '../../components/PaymentTotalsStrip';
 
 function ProviderDashboard() {
   const { user } = useRole();
@@ -27,6 +28,7 @@ function ProviderDashboard() {
         <div><p className="eyebrow">PROVIDER WORKSPACE</p><h1>Deliver, submit, get paid.</h1><p className="page-subtitle">Accept proposals, share evidence, and track each milestone through client approval and PayPal payment.</p></div>
       </div>
       <NextStep>{agreements.some((item) => item.status === 'PROPOSED') ? 'Review the proposed agreement and accept or decline it.' : agreements.length > 0 && agreements.every((item) => item.status === 'COMPLETED') ? 'All milestones are paid. Agreement completed.' : 'Open an active agreement to continue the next available milestone.'}</NextStep>
+      <PaymentTotalsStrip userId={user.id} />
       {error && <div className="alert alert-error" role="alert">{error} <button type="button" className="text-button" onClick={() => void load()}>Retry</button></div>}
       {loading ? <div className="loading-panel"><span className="spinner" /> Loading agreements…</div> : agreements.length === 0 ? (
         <section className="empty-state card"><div className="empty-icon" aria-hidden="true">⌁</div><h2>Your next project will appear here.</h2><p>When a client proposes an agreement, review the scope and milestones here.</p></section>

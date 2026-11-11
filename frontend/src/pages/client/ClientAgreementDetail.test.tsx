@@ -147,7 +147,9 @@ describe('ClientAgreementDetail', () => {
       </MemoryRouter>,
     );
 
-    const urlLinks = await screen.findAllByRole('link', { name: submittedUrl });
+    const evidenceSummary = (await screen.findAllByText('Design work is ready to review.'))[0];
+    fireEvent.click(evidenceSummary.closest('summary')!);
+    const urlLinks = await screen.findAllByRole('link', { name: new RegExp(submittedUrl) });
     expect(urlLinks.some((link) => link.getAttribute('href') === submittedUrl)).toBe(true);
 
     const approveButton = screen.getByRole('button', { name: 'Approve deliverable' });
@@ -155,7 +157,8 @@ describe('ClientAgreementDetail', () => {
     expect(approveButton).toHaveAttribute('aria-describedby', 'approval-blocker-milestone-1');
     expect(screen.getByText(/AI advice does not decide approval/i)).toBeInTheDocument();
     expect(screen.getAllByText(criterion).length).toBeGreaterThan(1);
-    fireEvent.click(screen.getByText('Deterministic link checks · 1'));
+    fireEvent.click(screen.getByText('View advisory details'));
+    fireEvent.click(screen.getByText('Link checks · 1'));
     expect(screen.getByText('Inaccessible to automated checker')).toBeInTheDocument();
 
     fireEvent.click(approveButton);

@@ -97,6 +97,25 @@ export interface Invoice {
   amount_cents: number;
   currency: string;
   payer_view_url: string | null;
+  created_at?: string | null;
+  sent_at?: string | null;
+  paid_at?: string | null;
+  payment_confirmation?: 'verified_webhook' | 'manual_sync' | null;
+  last_reminder_at?: string | null;
+  last_reminder_status?: 'pending' | 'sent' | 'failed' | null;
+  webhook_events?: {
+    event_type: string;
+    signature_verified: boolean;
+    processed: string;
+    created_at: string | null;
+    duplicate_deliveries: number;
+  }[];
+}
+
+export interface PaymentTotals {
+  total_invoiced_cents: number;
+  paid_cents: number;
+  pending_cents: number;
 }
 
 export interface PaymentReadinessCheck {
@@ -283,6 +302,8 @@ export const api = {
     request<{ demo_mode: 'mock' | 'real' }>('/api/v1/health'),
   listAgreements: (role: Role, userId: string) =>
     request<Agreement[]>(`/api/v1/${role}/agreements`, userId),
+  paymentTotals: (userId: string) =>
+    request<PaymentTotals>('/api/v1/payments/summary', userId),
   getAgreement: (role: Role, id: string, userId: string) =>
     request<Agreement>(`/api/v1/${role}/agreements/${id}`, userId),
   paymentReadiness: (userId: string, milestoneId: string) =>
@@ -439,6 +460,18 @@ export const api = {
   syncInvoice: (userId: string, invoiceId: string) =>
     request<{ status: string }>(
       `/api/v1/payments/invoices/${invoiceId}/sync`,
+      userId,
+      json('POST'),
+    ),
+  invoiceQrCode: (userId: string, invoiceId: string) =>
+    request<{ qr_code_base64: string; content_type: 'image/png' }>(
+      `/api/v1/payments/invoices/${invoiceId}/qr-code`,
+      userId,
+      json('POST'),
+    ),
+  sendInvoiceReminder: (userId: string, invoiceId: string) =>
+    request<{ status: 'sent' | 'already_sent'; sent_at: string | null }>(
+      `/api/v1/payments/invoices/${invoiceId}/reminder`,
       userId,
       json('POST'),
     ),

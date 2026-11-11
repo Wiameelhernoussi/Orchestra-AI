@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, type EvidenceAttachment } from '../api';
 import { EvidenceAttachments } from './EvidenceAttachments';
@@ -19,7 +19,7 @@ describe('EvidenceAttachments', () => {
     vi.restoreAllMocks();
   });
 
-  it('loads and displays an inline preview for uploaded images', async () => {
+  it('loads a fixed thumbnail and opens the full image in an accessible lightbox', async () => {
     vi.spyOn(api, 'downloadEvidenceAttachment').mockResolvedValue(new Blob(['image']));
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:design-preview');
 
@@ -31,14 +31,21 @@ describe('EvidenceAttachments', () => {
       />,
     );
 
-    const preview = await screen.findByRole('img', { name: 'Submitted evidence: design.png' });
-    expect(preview).toHaveAttribute('src', 'blob:design-preview');
+    const previewButton = await screen.findByRole('button', { name: 'Open image preview: design.png' });
+    expect(previewButton.querySelector('img')).toHaveAttribute('src', 'blob:design-preview');
     expect(api.downloadEvidenceAttachment).toHaveBeenCalledWith(
       'client-user',
       'evidence-1',
       'image-1',
     );
-    expect(screen.getByText('Image preview')).toBeInTheDocument();
+    fireEvent.click(previewButton);
+    expect(screen.getByRole('dialog', { name: 'Image preview: design.png' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Submitted evidence: design.png' })).toHaveAttribute(
+      'src',
+      'blob:design-preview',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Close image preview' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('reports an image preview download error and does not attempt to preview PDFs', async () => {

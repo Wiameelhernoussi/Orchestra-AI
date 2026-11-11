@@ -30,6 +30,10 @@ def _operation_name(method: str, path: str) -> str:
         return "get_invoice"
     if path == "/v2/invoicing/search-invoices":
         return "search_invoices"
+    if path.endswith("/generate-qr-code"):
+        return "generate_invoice_qr_code"
+    if path.endswith("/remind"):
+        return "send_invoice_reminder"
     if path == "/v1/notifications/verify-webhook-signature":
         return "verify_webhook"
     return "other"
@@ -151,6 +155,20 @@ class PaypalClient:
                 "page_size": 100,
                 "total_required": True,
             },
+        )
+
+    def generate_invoice_qr_code(self, invoice_id: str) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/v2/invoicing/invoices/{invoice_id}/generate-qr-code",
+            json={"width": 300, "height": 300, "action": "pay"},
+        )
+
+    def send_invoice_reminder(self, invoice_id: str) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/v2/invoicing/invoices/{invoice_id}/remind",
+            json={},
         )
 
     def verify_webhook(self, headers: dict[str, str], event: dict[str, Any]) -> bool:

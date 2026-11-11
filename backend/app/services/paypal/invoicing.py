@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from decimal import Decimal
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -278,10 +279,14 @@ def _create_or_retry_invoice(
             remote_status = recovered_remote_invoice["status"]
             apply_paypal_invoice_status(db, invoice, remote_status)
             sent = recovered_remote_invoice
+            if invoice.sent_at is None:
+                invoice.sent_at = datetime.now(timezone.utc)
         else:
             send_request_id = str(uuid5(NAMESPACE_URL, f"orchestra-invoice-send:{invoice.id}"))
             operation["step"] = "send_invoice"
             sent = paypal.send_invoice(invoice.paypal_invoice_id, send_request_id)
+            if invoice.sent_at is None:
+                invoice.sent_at = datetime.now(timezone.utc)
         db.refresh(invoice, with_for_update=True)
         if invoice.status != "PAID":
             invoice.status = "SENT"

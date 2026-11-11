@@ -1,14 +1,15 @@
-import { formatMoney, type Agreement, type Role } from '../api';
+import type { CSSProperties } from 'react';
+import { formatMoney, type Agreement } from '../api';
 import { StatusBadge } from './StatusBadge';
 
 export function AgreementSummaryStrip({
   agreement,
-  role,
   nextAction,
+  onNextAction,
 }: {
   agreement: Agreement;
-  role: Role;
   nextAction: string;
+  onNextAction?: () => void;
 }) {
   const paidCents = agreement.milestones
     .filter((milestone) => milestone.status === 'PAID')
@@ -19,27 +20,32 @@ export function AgreementSummaryStrip({
 
   return (
     <section className="agreement-summary-strip" aria-label="Agreement summary">
-      <div className="summary-next-action">
-        <span className="eyebrow">YOUR NEXT ACTION</span>
-        <strong>{nextAction}</strong>
+      <div className="summary-agreement-title">
+        <span className="eyebrow">AGREEMENT</span>
+        <h2>{agreement.title}</h2>
       </div>
       <div className="summary-progress">
-        <div className="summary-progress-label">
-          <span>Progress · {progress}%</span>
-          <strong>{formatMoney(paidCents)} paid / {formatMoney(agreement.total_amount_cents)}</strong>
-        </div>
         <div
-          className="summary-progress-track"
+          className="summary-progress-ring"
           role="progressbar"
           aria-label="Agreement amount paid"
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={progress}
+          style={{ '--progress': `${progress * 3.6}deg` } as CSSProperties}
         >
-          <span style={{ width: `${progress}%` }} />
+          <span>{progress}%</span>
         </div>
-        <small>{role === 'client' ? 'Client view' : 'Provider view'}</small>
+        <div className="summary-progress-copy">
+          <strong>{formatMoney(paidCents)} <span>paid</span></strong>
+          <small>of {formatMoney(agreement.total_amount_cents)} total</small>
+        </div>
       </div>
+      <button type="button" className="summary-next-action" onClick={onNextAction}>
+        <span className="eyebrow">YOUR NEXT ACTION</span>
+        <strong>{nextAction}</strong>
+        <span className="summary-next-arrow" aria-hidden="true">→</span>
+      </button>
     </section>
   );
 }

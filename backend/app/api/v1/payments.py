@@ -1,5 +1,11 @@
+import base64
+import binascii
+import json
+from datetime import datetime, timedelta, timezone
+
 from pydantic import BaseModel, ConfigDict
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import case, func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -11,6 +17,7 @@ from app.models.audit import AuditLog
 from app.models.invoice import Invoice
 from app.models.milestone import Milestone
 from app.models.user import User
+from app.models.webhook import WebhookEvent
 from app.services.paypal.client import PaypalAPIError, PaypalClient
 from app.services.mock_integrations import MockPaypalClient
 from app.services.paypal.invoicing import (
@@ -35,6 +42,58 @@ class InvoiceResponse(BaseModel):
     currency: str
     status: str
     paypal_invoice_url: str | None
+    sent_at: datetime | None = None
+    last_reminder_at: datetime | None = None
+    last_reminder_status: str | None = None
+
+
+class PaymentTotalsResponse(BaseModel):
+    total_invoiced_cents: int
+    paid_cents: int
+    pending_cents: int
+
+
+@router.get("/summary", response_model=PaymentTotalsResponse)
+def get_payment_totals(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, int]:
+    if current_user.role not in {"client", "provider"}:
+        raise HTTPException(status_code=403, detail="Payment totals are available to agreement members.")
+
+    agreement_org_column = (
+        Agreement.client_org_id if current_user.role == "client" else Agreement.provider_org_id
+    )
+    totals = (
+        db.query(
+            func.coalesce(func.sum(Invoice.amount_cents), 0).label("total_invoiced"),
+            func.coalesce(
+                func.sum(case((Invoice.status == "PAID", Invoice.amount_cents), else_=0)),
+                0,
+            ).label("paid"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (Invoice.status.in_(("DRAFT", "SENT")), Invoice.amount_cents),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("pending"),
+        )
+        .join(Milestone, Invoice.milestone_id == Milestone.id)
+        .join(Agreement, Milestone.agreement_id == Agreement.id)
+        .filter(
+            agreement_org_column == current_user.organization_id,
+            Invoice.paypal_invoice_id.is_not(None),
+        )
+        .one()
+    )
+    return {
+        "total_invoiced_cents": int(totals.total_invoiced),
+        "paid_cents": int(totals.paid),
+        "pending_cents": int(totals.pending),
+    }
 
 
 @router.post("/milestones/{milestone_id}/invoice", response_model=InvoiceResponse)
@@ -169,7 +228,10 @@ def sync_invoice_status(
                 action="invoice_status_synchronized",
                 entity_type="invoice",
                 entity_id=invoice.id,
-                details=f'{{"source":"{status_source}"}}',
+                details=json.dumps(
+                    {"source": status_source, "status": remote_status},
+                    separators=(",", ":"),
+                ),
             )
         )
         db.commit()
@@ -181,6 +243,139 @@ def sync_invoice_status(
     except (InvalidTransitionError, ValueError) as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/invoices/{invoice_id}/qr-code")
+def get_invoice_qr_code(
+    invoice_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    paypal: PaypalClient = Depends(get_paypal_client),
+) -> dict[str, str]:
+    invoice = db.get(Invoice, invoice_id)
+    if invoice is None or not invoice.paypal_invoice_id:
+        raise HTTPException(status_code=404, detail="Invoice not found.")
+    milestone = db.get(Milestone, invoice.milestone_id)
+    agreement = db.get(Agreement, milestone.agreement_id) if milestone else None
+    if (
+        agreement is None
+        or current_user.role != "client"
+        or current_user.organization_id != agreement.client_org_id
+    ):
+        raise HTTPException(status_code=404, detail="Invoice not found.")
+    if invoice.status != "SENT":
+        raise HTTPException(status_code=409, detail="A payment QR code is available only for an unpaid sent invoice.")
+    if isinstance(paypal, MockPaypalClient):
+        raise HTTPException(status_code=404, detail="PayPal Sandbox QR codes are unavailable in mock mode.")
+    try:
+        result = paypal.generate_invoice_qr_code(invoice.paypal_invoice_id)
+        encoded_image = result.get("image")
+        if not isinstance(encoded_image, str) or not encoded_image:
+            raise PaypalAPIError("PayPal Sandbox returned no QR code image.")
+        decoded_image = base64.b64decode(encoded_image, validate=True)
+        if not decoded_image.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise PaypalAPIError("PayPal Sandbox returned an invalid QR code image.")
+    except (PaypalAPIError, binascii.Error, ValueError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="PayPal Sandbox could not generate a payment QR code.",
+        ) from exc
+    return {"qr_code_base64": encoded_image, "content_type": "image/png"}
+
+
+@router.post("/invoices/{invoice_id}/reminder")
+def send_invoice_reminder(
+    invoice_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    paypal: PaypalClient = Depends(get_paypal_client),
+) -> dict[str, str | None]:
+    invoice = db.get(Invoice, invoice_id)
+    if invoice is None or not invoice.paypal_invoice_id:
+        raise HTTPException(status_code=404, detail="Invoice not found.")
+    milestone = db.get(Milestone, invoice.milestone_id)
+    agreement = db.get(Agreement, milestone.agreement_id) if milestone else None
+    if (
+        agreement is None
+        or current_user.role != "provider"
+        or current_user.organization_id != agreement.provider_org_id
+    ):
+        raise HTTPException(status_code=404, detail="Invoice not found.")
+    if isinstance(paypal, MockPaypalClient):
+        raise HTTPException(status_code=404, detail="PayPal Sandbox reminders are unavailable in mock mode.")
+
+    db.refresh(invoice, with_for_update=True)
+    if invoice.status != "SENT":
+        raise HTTPException(status_code=409, detail="Reminders are available only while an invoice is awaiting payment.")
+    now = datetime.now(timezone.utc)
+    last_reminder_at = invoice.last_reminder_at
+    if last_reminder_at is not None:
+        if last_reminder_at.tzinfo is None:
+            last_reminder_at = last_reminder_at.replace(tzinfo=timezone.utc)
+        if now - last_reminder_at < timedelta(hours=24):
+            if invoice.last_reminder_status == "sent":
+                return {
+                    "status": "already_sent",
+                    "sent_at": invoice.last_reminder_at.isoformat(),
+                }
+            raise HTTPException(
+                status_code=409,
+                detail="A reminder was already attempted recently and will not be resent to avoid duplicates.",
+            )
+
+    invoice.last_reminder_at = now
+    invoice.last_reminder_status = "pending"
+    db.add(
+        AuditLog(
+            agreement_id=agreement.id,
+            user_id=current_user.id,
+            action="invoice_payment_reminder_requested",
+            entity_type="invoice",
+            entity_id=invoice.id,
+            details='{"provider":"paypal_sandbox"}',
+        )
+    )
+    db.commit()
+    try:
+        paypal.send_invoice_reminder(invoice.paypal_invoice_id)
+    except PaypalAPIError as exc:
+        invoice.last_reminder_status = "failed"
+        db.add(
+            AuditLog(
+                agreement_id=agreement.id,
+                user_id=current_user.id,
+                action="invoice_payment_reminder_failed",
+                entity_type="invoice",
+                entity_id=invoice.id,
+                details=json.dumps(
+                    {
+                        "status_code": exc.status_code,
+                        "error_name": exc.error_name,
+                        "debug_id": exc.debug_id,
+                    },
+                    separators=(",", ":"),
+                ),
+            )
+        )
+        db.commit()
+        raise HTTPException(
+            status_code=502,
+            detail="PayPal Sandbox could not send the payment reminder. It will not be retried automatically.",
+        ) from exc
+
+    invoice.last_reminder_status = "sent"
+    db.add(
+        AuditLog(
+            agreement_id=agreement.id,
+            user_id=current_user.id,
+            action="invoice_payment_reminder_sent",
+            entity_type="invoice",
+            entity_id=invoice.id,
+            details='{"provider":"paypal_sandbox"}',
+        )
+    )
+    db.commit()
+    return {"status": "sent", "sent_at": now.isoformat()}
 
 
 @router.post("/invoices/{invoice_id}/simulate-mock-payment", response_model=InvoiceResponse)

@@ -107,6 +107,45 @@ def test_invoice_search_posts_the_idempotency_number():
     assert captured["payload"]["invoice_number"] == "ORC-DESIGN-150-SMOKE"
 
 
+@pytest.mark.parametrize(
+    ("path_suffix", "expected_payload"),
+    [
+        (
+            "generate-qr-code",
+            {"width": 300, "height": 300, "action": "pay"},
+        ),
+        ("remind", {}),
+    ],
+)
+def test_invoice_qr_and_reminder_use_documented_sandbox_endpoints(
+    path_suffix, expected_payload
+):
+    captured = {}
+
+    def handler(request):
+        if request.url.path == "/v1/oauth2/token":
+            return httpx.Response(200, json={"access_token": "sandbox-token", "expires_in": 300})
+        captured["path"] = request.url.path
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(200, json={"image": "base64-image"})
+
+    http = httpx.Client(
+        base_url="https://api-m.sandbox.paypal.com",
+        transport=httpx.MockTransport(handler),
+    )
+    paypal = PaypalClient(_settings(), http)
+    try:
+        if path_suffix == "remind":
+            paypal.send_invoice_reminder("PAYPAL-INVOICE-1")
+        else:
+            paypal.generate_invoice_qr_code("PAYPAL-INVOICE-1")
+    finally:
+        http.close()
+
+    assert captured["path"] == f"/v2/invoicing/invoices/PAYPAL-INVOICE-1/{path_suffix}"
+    assert captured["payload"] == expected_payload
+
+
 def test_live_paypal_endpoint_is_rejected():
     with pytest.raises(PaypalConfigurationError, match="Sandbox"):
         PaypalClient(_settings(PAYPAL_BASE_URL="https://api-m.paypal.com"))

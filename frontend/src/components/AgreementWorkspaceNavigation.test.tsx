@@ -47,18 +47,23 @@ describe('Agreement workspace navigation', () => {
   afterEach(() => cleanup());
 
   it('shows next action and amount-paid progress', () => {
+    const onNextAction = vi.fn();
     render(
       <AgreementSummaryStrip
         agreement={agreement}
-        role="client"
         nextAction="Review the Development milestone."
+        onNextAction={onNextAction}
       />,
     );
 
     expect(screen.getByText('YOUR NEXT ACTION')).toBeInTheDocument();
     expect(screen.getByText('Review the Development milestone.')).toBeInTheDocument();
-    expect(screen.getByText('Progress · 30%')).toBeInTheDocument();
-    expect(screen.getByText('$150.00 paid / $500.00')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Project' })).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Agreement amount paid' })).toHaveAttribute('aria-valuenow', '30');
+    expect(screen.getByText('$150.00')).toBeInTheDocument();
+    expect(screen.getByText('of $500.00 total')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /YOUR NEXT ACTION Review the Development milestone/ }));
+    expect(onNextAction).toHaveBeenCalledOnce();
   });
 
   it('selects the active milestone from the rail', () => {

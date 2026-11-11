@@ -53,8 +53,8 @@ describe('PaymentReadinessPanel', () => {
     render(<PaymentReadinessPanel milestone={milestone} role="provider" />);
 
     expect(screen.getByText('BLOCKED')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('PAYMENT READINESS').closest('summary')!);
     expect(screen.getByText(/AI advisory: unavailable · 1 unverified criteria/)).toBeInTheDocument();
-    expect(screen.getByText(/Next step for the provider/)).toBeInTheDocument();
     expect(screen.getByText(/Submit evidence for: Design files are provided/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Why is payment blocked?'));
@@ -78,10 +78,12 @@ describe('PaymentReadinessPanel', () => {
 
     render(<PaymentReadinessPanel milestone={paidMilestone} role="client" />);
 
-    expect(screen.getByText('100% complete')).toBeInTheDocument();
+    expect(screen.getByText('✓ 100%')).toBeInTheDocument();
+    expect(screen.getByText('✓ Next milestone unlocked · Development')).toBeInTheDocument();
+    expect(screen.queryByText('Why is payment blocked?')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('PAYMENT READINESS').closest('summary')!);
     const nextMilestone = screen.getByText('Next milestone: unlocked · Development');
     expect(nextMilestone.closest('li')).toHaveClass('complete');
-    expect(screen.queryByText('Why is payment blocked?')).not.toBeInTheDocument();
-    expect(screen.queryByText(/75% complete/)).not.toBeInTheDocument();
+    expect(screen.queryByText('75%')).not.toBeInTheDocument();
   });
 });

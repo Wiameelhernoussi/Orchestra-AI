@@ -35,6 +35,7 @@ describe('AdvisoryCard', () => {
       />,
     );
 
+    fireEvent.click(screen.getByText('View advisory details'));
     fireEvent.click(screen.getByText('Image observations · advisory only'));
     expect(screen.getByText('home-page.png')).toBeInTheDocument();
     expect(screen.getByText('Analyzed')).toBeInTheDocument();
@@ -71,6 +72,7 @@ describe('AdvisoryCard', () => {
       />,
     );
 
+    fireEvent.click(screen.getByText('View advisory details'));
     fireEvent.click(screen.getByText('Image observations · advisory only'));
     expect(screen.getByText('Image not analyzed.')).toBeInTheDocument();
     expect(screen.getByText('design.png')).toBeInTheDocument();
@@ -123,9 +125,10 @@ describe('AdvisoryCard', () => {
       />,
     );
 
-    fireEvent.click(screen.getByText('Deterministic link checks · 2'));
-    expect(screen.getByText('AI advisory only. Human approval required.')).toBeInTheDocument();
-    expect(screen.getByText('partial')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('View advisory details'));
+    fireEvent.click(screen.getByText('Link checks · 2'));
+    expect(screen.getByText('AI · Partial')).toBeInTheDocument();
+    expect(screen.getByText('AI · Partial')).toBeInTheDocument();
     expect(screen.getByText('✓ Verified')).toBeInTheDocument();
     expect(screen.getByText('– Not verifiable')).toBeInTheDocument();
     expect(screen.getByText('One item needs more evidence.')).toBeInTheDocument();

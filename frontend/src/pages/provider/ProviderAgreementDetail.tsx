@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, formatMoney, parseEvidenceContent, type Agreement, type AuditEntry } from '../../api';
-import { AdvisoryCard } from '../../components/AdvisoryCard';
+import { api, formatMoney, type Agreement, type AuditEntry } from '../../api';
 import { AgreementSummaryStrip, MilestoneRail } from '../../components/AgreementWorkspaceNavigation';
-import { EvidenceAttachments } from '../../components/EvidenceAttachments';
+import { EvidenceSubmissionCard } from '../../components/EvidenceSubmissionCard';
 import { StatusBadge } from '../../components/StatusBadge';
 import { useRole } from '../../context/RoleContext';
 import { InvoiceTable } from '../../components/InvoiceTable';
 import { PaymentReadinessPanel } from '../../components/PaymentReadinessPanel';
+import { PayPalInvoicePanel } from '../../components/PayPalInvoicePanel';
 import {
   activityDescription,
   agreementNextStep,
@@ -104,6 +104,15 @@ function ProviderAgreementDetail() {
     ?? agreement.milestones.find((item) => item.status === 'IN_PROGRESS' || item.status === 'REVISION_REQUESTED')
     ?? agreement.milestones.find((item) => item.status !== 'PAID')
     ?? agreement.milestones[0];
+  function focusNextAction() {
+    const action = document.querySelector<HTMLElement>(
+      '.provider-milestones .button-primary:not(:disabled), .proposal-actions .button-primary:not(:disabled)',
+    );
+    (action ?? document.querySelector('.agreement-detail-workspace'))?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    });
+  }
 
   return (
     <>
@@ -112,7 +121,11 @@ function ProviderAgreementDetail() {
         <div><p className="eyebrow">PROVIDER AGREEMENT</p><h1>{agreement.title}</h1><p className="page-subtitle">{agreement.milestones.length} milestones</p></div>
         <StatusBadge status={agreement.status} />
       </div>
-      <AgreementSummaryStrip agreement={agreement} role="provider" nextAction={agreementNextStep(agreement, 'provider')} />
+      <AgreementSummaryStrip
+        agreement={agreement}
+        nextAction={agreementNextStep(agreement, 'provider')}
+        onNextAction={focusNextAction}
+      />
       {error && <div className="alert alert-error" role="alert">{error} <button type="button" className="text-button" onClick={() => void load()}>Retry</button></div>}
 
       {agreement.status === 'PROPOSED' && (
@@ -138,6 +151,9 @@ function ProviderAgreementDetail() {
             <p className="milestone-description">{milestone.description}</p>
             <div className="criteria-block"><h3 className="subsection-title">Acceptance criteria</h3><ul className="plain-list">{milestone.acceptance_criteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ul></div>
             <PaymentReadinessPanel milestone={milestone} role="provider" />
+            {milestone.invoices[0] && (
+              <PayPalInvoicePanel invoice={milestone.invoices[0]} role="provider" userId={user.id} />
+            )}
 
             {milestone.status === 'PENDING' || milestone.status === 'REVISION_REQUESTED' ? (
               <div className="provider-action-row sticky-action-bar">
@@ -227,29 +243,12 @@ function ProviderAgreementDetail() {
               <div className="evidence-stack provider-evidence">
                 <h3 className="subsection-title">Submitted evidence & advisory</h3>
                 {milestone.evidence.map((item) => (
-                  <div className="evidence-card" key={item.id}>
-                    <div className="evidence-meta">
-                      <span>Evidence submitted · AI results are advisory</span>
-                      <span>{item.created_at ? new Date(item.created_at).toLocaleString() : ''}</span>
-                    </div>
-                    {(() => {
-                      const parsed = parseEvidenceContent(item.content);
-                      const related = milestone.criteria?.filter((criterion) => parsed.criterion_ids.includes(criterion.id)) ?? [];
-                      return (
-                        <>
-                          {parsed.text && <p className="evidence-copy">{parsed.text}</p>}
-                          {parsed.links.map((link) => <a className="evidence-link" href={link} target="_blank" rel="noreferrer" key={link}>{link} ↗</a>)}
-                          {related.length > 0 && (
-                            <p className="evidence-related-criteria">
-                              Related to: {related.map((criterion) => criterion.description).join(' · ')}
-                            </p>
-                          )}
-                          <EvidenceAttachments userId={user.id} evidenceId={item.id} attachments={parsed.attachments} />
-                        </>
-                      );
-                    })()}
-                    {item.ai_report && <AdvisoryCard report={item.ai_report} linkFacts={item.link_checks} />}
-                  </div>
+                  <EvidenceSubmissionCard
+                    key={item.id}
+                    userId={user.id}
+                    evidence={item}
+                    criteria={milestone.criteria ?? []}
+                  />
                 ))}
               </div>
             )}

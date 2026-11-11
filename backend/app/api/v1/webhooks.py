@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -210,6 +211,12 @@ async def receive_paypal_webhook(
     linked_milestone_id = invoice.milestone_id if invoice is not None else None
     existing = db.query(WebhookEvent).filter(WebhookEvent.paypal_event_id == event_id).first()
     if existing is not None:
+        db.execute(
+            update(WebhookEvent)
+            .where(WebhookEvent.id == existing.id)
+            .values(duplicate_deliveries=WebhookEvent.duplicate_deliveries + 1)
+        )
+        db.commit()
         _log_webhook_delivery(
             event_id,
             event_type,
@@ -226,12 +233,21 @@ async def receive_paypal_webhook(
         resource_id=invoice_id,
         raw_payload=json.dumps(event, separators=(",", ":"), sort_keys=True),
         processed="pending",
+        signature_verified=True,
     )
     db.add(webhook_record)
     try:
         db.flush()
     except IntegrityError:
         db.rollback()
+        existing = db.query(WebhookEvent).filter(WebhookEvent.paypal_event_id == event_id).first()
+        if existing is not None:
+            db.execute(
+                update(WebhookEvent)
+                .where(WebhookEvent.id == existing.id)
+                .values(duplicate_deliveries=WebhookEvent.duplicate_deliveries + 1)
+            )
+            db.commit()
         _log_webhook_delivery(
             event_id,
             event_type,
@@ -291,6 +307,12 @@ async def receive_paypal_webhook(
         db.rollback()
         existing = db.query(WebhookEvent).filter(WebhookEvent.paypal_event_id == event_id).first()
         if existing is not None:
+            db.execute(
+                update(WebhookEvent)
+                .where(WebhookEvent.id == existing.id)
+                .values(duplicate_deliveries=WebhookEvent.duplicate_deliveries + 1)
+            )
+            db.commit()
             _log_webhook_delivery(
                 event_id,
                 event_type,

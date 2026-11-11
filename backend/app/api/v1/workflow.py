@@ -296,6 +296,70 @@ def _milestone_summary(db: Session, milestone: Milestone) -> dict[str, Any]:
         .order_by(Evidence.created_at.asc())
         .all()
     )
+    invoice_history: dict[str, dict[str, Any]] = {}
+    for invoice in invoices:
+        webhook_events = (
+            db.query(WebhookEvent)
+            .filter(WebhookEvent.resource_id == invoice.paypal_invoice_id)
+            .order_by(WebhookEvent.created_at.asc(), WebhookEvent.id.asc())
+            .all()
+            if invoice.paypal_invoice_id
+            else []
+        )
+        paid_event = next(
+            (
+                item for item in webhook_events
+                if item.event_type == "INVOICING.INVOICE.PAID"
+                and item.processed == "processed"
+                and item.signature_verified
+            ),
+            None,
+        )
+        sync_audits = (
+            db.query(AuditLog)
+            .filter(
+                AuditLog.entity_type == "invoice",
+                AuditLog.entity_id == invoice.id,
+                AuditLog.action == "invoice_status_synchronized",
+            )
+            .order_by(AuditLog.created_at.desc())
+            .all()
+        )
+        paid_sync = next(
+            (
+                item for item in sync_audits
+                if item.details
+                and json.loads(item.details).get("source") == "paypal_api"
+                and json.loads(item.details).get("status") == "PAID"
+            ),
+            None,
+        )
+        payment_source = (
+            "verified_webhook" if paid_event is not None
+            else "manual_sync" if invoice.status == "PAID" and paid_sync is not None
+            else None
+        )
+        paid_at = (
+            paid_event.created_at if paid_event is not None
+            else paid_sync.created_at if payment_source == "manual_sync" and paid_sync is not None
+            else None
+        )
+        invoice_history[invoice.id] = {
+            "created_at": invoice.created_at.isoformat() if invoice.created_at else None,
+            "sent_at": invoice.sent_at.isoformat() if invoice.sent_at else None,
+            "paid_at": paid_at.isoformat() if paid_at else None,
+            "payment_confirmation": payment_source,
+            "webhook_events": [
+                {
+                    "event_type": item.event_type,
+                    "signature_verified": item.signature_verified,
+                    "processed": item.processed,
+                    "created_at": item.created_at.isoformat() if item.created_at else None,
+                    "duplicate_deliveries": item.duplicate_deliveries,
+                }
+                for item in webhook_events
+            ],
+        }
     return {
         "id": milestone.id,
         "title": milestone.title,
@@ -332,6 +396,13 @@ def _milestone_summary(db: Session, milestone: Milestone) -> dict[str, Any]:
                 "amount_cents": invoice.amount_cents,
                 "currency": invoice.currency,
                 "payer_view_url": invoice.paypal_invoice_url,
+                "created_at": invoice_history[invoice.id]["created_at"],
+                "sent_at": invoice_history[invoice.id]["sent_at"],
+                "paid_at": invoice_history[invoice.id]["paid_at"],
+                "payment_confirmation": invoice_history[invoice.id]["payment_confirmation"],
+                "last_reminder_at": invoice.last_reminder_at.isoformat() if invoice.last_reminder_at else None,
+                "last_reminder_status": invoice.last_reminder_status,
+                "webhook_events": invoice_history[invoice.id]["webhook_events"],
             }
             for invoice in invoices
         ],

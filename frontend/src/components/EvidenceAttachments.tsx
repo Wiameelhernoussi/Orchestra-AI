@@ -18,6 +18,7 @@ function ImagePreview({
 }) {
   const [previewUrl, setPreviewUrl] = useState('');
   const [error, setError] = useState('');
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -41,14 +42,54 @@ function ImagePreview({
     };
   }, [attachment.id, evidenceId, userId]);
 
+  useEffect(() => {
+    if (!lightboxOpen) return undefined;
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setLightboxOpen(false);
+    }
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [lightboxOpen]);
+
   if (error) return <p className="attachment-error" role="alert">{error}</p>;
-  if (!previewUrl) return <p className="attachment-preview-loading" role="status">Loading image preview…</p>;
+  if (!previewUrl) return <p className="attachment-preview-loading" role="status">Loading image…</p>;
 
   return (
-    <figure className="evidence-image-preview-wrap">
-      <img className="evidence-image-preview" src={previewUrl} alt={`Submitted evidence: ${attachment.name}`} />
-      <figcaption>Image preview</figcaption>
-    </figure>
+    <>
+      <button
+        type="button"
+        className="evidence-thumbnail"
+        aria-label={`Open image preview: ${attachment.name}`}
+        onClick={() => setLightboxOpen(true)}
+      >
+        <img src={previewUrl} alt="" />
+        <span>View image</span>
+      </button>
+      {lightboxOpen && (
+        <div
+          className="evidence-lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Image preview: ${attachment.name}`}
+          onClick={() => setLightboxOpen(false)}
+        >
+          <button
+            type="button"
+            className="evidence-lightbox-close"
+            aria-label="Close image preview"
+            onClick={() => setLightboxOpen(false)}
+          >
+            Close
+          </button>
+          <img
+            src={previewUrl}
+            alt={`Submitted evidence: ${attachment.name}`}
+            onClick={(event) => event.stopPropagation()}
+          />
+          <p>{attachment.name}</p>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -91,32 +132,31 @@ export function EvidenceAttachments({
   if (attachments.length === 0) return null;
   return (
     <div className="evidence-attachments">
-      <h4>Attachments <span>stored securely · image previews shown below</span></h4>
+      <h4>Submitted files <span>{attachments.length}</span></h4>
       <ul>
         {attachments.map((attachment) => (
           <li key={attachment.id}>
-            <span className="attachment-file-icon" aria-hidden="true">
-              {attachment.content_type === 'application/pdf' ? 'PDF' : 'IMG'}
-            </span>
-            <span className="attachment-file-info">
-              <strong>{attachment.name}</strong>
-              <small>{formatBytes(attachment.size_bytes)}</small>
-            </span>
-            <button
-              type="button"
-              className="text-button"
-              disabled={busyId !== ''}
-              onClick={() => void download(attachment)}
-            >
-              {busyId === attachment.id ? 'Downloading…' : 'Download'}
-            </button>
-            {['image/png', 'image/jpeg', 'image/webp'].includes(attachment.content_type) && (
+            {['image/png', 'image/jpeg', 'image/webp'].includes(attachment.content_type) ? (
               <ImagePreview
                 userId={userId}
                 evidenceId={evidenceId}
                 attachment={attachment}
               />
+            ) : (
+              <span className="attachment-file-icon" aria-hidden="true">PDF</span>
             )}
+            <div className="attachment-file-info">
+              <strong title={attachment.name}>{attachment.name}</strong>
+              <small>{formatBytes(attachment.size_bytes)}</small>
+            </div>
+            <button
+              type="button"
+              className="attachment-download"
+              disabled={busyId !== ''}
+              onClick={() => void download(attachment)}
+            >
+              {busyId === attachment.id ? 'Downloading…' : 'Download'}
+            </button>
           </li>
         ))}
       </ul>

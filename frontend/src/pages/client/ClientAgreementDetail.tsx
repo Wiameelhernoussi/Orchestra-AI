@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, formatMoney, parseEvidenceContent, type Agreement, type AuditEntry } from '../../api';
-import { AdvisoryCard } from '../../components/AdvisoryCard';
+import { api, formatMoney, type Agreement, type AuditEntry } from '../../api';
 import { AgreementSummaryStrip, MilestoneRail } from '../../components/AgreementWorkspaceNavigation';
-import { EvidenceAttachments } from '../../components/EvidenceAttachments';
+import { EvidenceSubmissionCard } from '../../components/EvidenceSubmissionCard';
 import { StatusBadge } from '../../components/StatusBadge';
 import { useRole } from '../../context/RoleContext';
 import { InvoiceTable } from '../../components/InvoiceTable';
 import { PaymentReadinessPanel } from '../../components/PaymentReadinessPanel';
+import { PayPalInvoicePanel } from '../../components/PayPalInvoicePanel';
 import { activityDescription, agreementNextStep } from '../../presentation';
 
 function ClientAgreementDetail() {
@@ -105,6 +105,15 @@ function ClientAgreementDetail() {
     ?? agreement.milestones.find((item) => item.status === 'IN_REVIEW')
     ?? agreement.milestones.find((item) => item.status !== 'PAID')
     ?? agreement.milestones[0];
+  function focusNextAction() {
+    const action = document.querySelector<HTMLElement>(
+      '.agreement-detail-content .button-primary:not(:disabled), .payment-panel .button-paypal:not(:disabled)',
+    );
+    (action ?? document.querySelector('.agreement-detail-workspace'))?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    });
+  }
   return (
     <>
       <div className="breadcrumb"><Link to="/client">Agreements</Link><span>/</span><span>{agreement.title}</span></div>
@@ -116,7 +125,11 @@ function ClientAgreementDetail() {
         </div>
         <StatusBadge status={agreement.status} />
       </div>
-      <AgreementSummaryStrip agreement={agreement} role="client" nextAction={agreementNextStep(agreement, 'client')} />
+      <AgreementSummaryStrip
+        agreement={agreement}
+        nextAction={agreementNextStep(agreement, 'client')}
+        onNextAction={focusNextAction}
+      />
       {error && <div className="alert alert-error" role="alert">{error} <button type="button" className="text-button" onClick={() => void load()}>Retry</button></div>}
 
       <div className="agreement-detail-workspace">
@@ -138,46 +151,21 @@ function ClientAgreementDetail() {
                 {milestone.acceptance_criteria.map((criterion) => <li key={criterion}>{criterion}</li>)}
               </ul>
               <PaymentReadinessPanel milestone={milestone} role="client" />
+              {milestone.invoices[0] && (
+                <PayPalInvoicePanel invoice={milestone.invoices[0]} role="client" userId={user.id} />
+              )}
 
               {milestone.evidence.length > 0 && (
                 <div className="evidence-stack">
                   <h3 className="subsection-title">Provider evidence</h3>
-                  {milestone.evidence.map((item) => {
-                    const parsed = parseEvidenceContent(item.content);
-                    const relatedCriteria = milestone.criteria?.filter(
-                      (criterion) => parsed.criterion_ids.includes(criterion.id),
-                    ) ?? [];
-                    return (
-                      <article className="evidence-card" key={item.id}>
-                        <div className="evidence-meta">
-                          <span>Evidence submitted · AI advisory only</span>
-                          <span>{item.created_at ? new Date(item.created_at).toLocaleString() : ''}</span>
-                        </div>
-                        {parsed.text && <p className="evidence-copy">{parsed.text}</p>}
-                        {parsed.links.map((link) => <a className="evidence-link" href={link} target="_blank" rel="noreferrer" key={link}>{link} ↗</a>)}
-                        {parsed.links.length === 0 && parsed.attachments.length === 0 && (
-                          <p className="evidence-source-note">
-                            Description only — no URL or attachment was submitted, so no external deliverable was available to check.
-                          </p>
-                        )}
-                        {parsed.links.length > 0 && (
-                          <p className="evidence-source-note">
-                            Submitted URL(s) are shown above. Automated checks only report limited reachability and metadata; they do not verify page contents or criterion relevance.
-                          </p>
-                        )}
-                        {relatedCriteria.length > 0 && (
-                          <p className="evidence-related-criteria">
-                            Related to: {relatedCriteria.map((criterion) => criterion.description).join(' · ')}
-                          </p>
-                        )}
-                        <EvidenceAttachments userId={user.id} evidenceId={item.id} attachments={parsed.attachments} />
-                        <p className="evidence-verification-note">
-                          Submitted evidence is not the same as verified evidence. AI criterion results are advisory; your review and approval remain the human gate.
-                        </p>
-                        {item.ai_report && <AdvisoryCard report={item.ai_report} linkFacts={item.link_checks} />}
-                      </article>
-                    );
-                  })}
+                  {milestone.evidence.map((item) => (
+                    <EvidenceSubmissionCard
+                      key={item.id}
+                      userId={user.id}
+                      evidence={item}
+                      criteria={milestone.criteria ?? []}
+                    />
+                  ))}
                 </div>
               )}
 

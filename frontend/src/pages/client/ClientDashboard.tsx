@@ -4,6 +4,7 @@ import { api, type Agreement } from '../../api';
 import { NextStep } from '../../components/NextStep';
 import { useRole } from '../../context/RoleContext';
 import { AgreementCards } from '../../components/AgreementCards';
+import { PaymentTotalsStrip } from '../../components/PaymentTotalsStrip';
 
 function ClientDashboard() {
   const { user } = useRole();
@@ -43,6 +44,7 @@ function ClientDashboard() {
             ? 'Open an agreement to review its milestones and the provider’s latest evidence.'
             : 'Describe a project to create your first structured agreement.'}
       </NextStep>
+      <PaymentTotalsStrip userId={user.id} />
 
       {error && <div className="alert alert-error" role="alert">{error} <button className="text-button" onClick={() => void load()}>Retry</button></div>}
       {loading ? (

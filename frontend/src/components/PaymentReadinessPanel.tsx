@@ -2,7 +2,7 @@ import type { Milestone, Role } from '../api';
 
 function milestoneState(milestone: Milestone): string {
   const readiness = milestone.payment_readiness;
-  if (readiness.status === 'PAID') return 'PAID';
+  if (milestone.status === 'PAID' || readiness.status === 'PAID') return 'PAID';
   if (readiness.status === 'READY_FOR_APPROVAL') return 'READY FOR CLIENT APPROVAL';
   if (
     readiness.paypal_invoice_allowed
@@ -35,7 +35,9 @@ export function PaymentReadinessPanel({
 }) {
   const readiness = milestone.payment_readiness;
   const state = milestoneState(milestone);
-  const nextMilestoneUnlocked = state === 'PAID' || readiness.next_milestone_unlocked;
+  const paid = state === 'PAID';
+  const nextMilestoneUnlocked = paid || readiness.next_milestone_unlocked;
+  const progress = paid ? 100 : readiness.score;
   const webhookText = readiness.webhook_payment_confirmed
     ? 'Confirmed by verified PayPal webhook'
     : readiness.paypal_status === 'PAID'
@@ -47,86 +49,91 @@ export function PaymentReadinessPanel({
 
   return (
     <section className="payment-readiness-panel" aria-label={`Payment readiness for ${milestone.title}`}>
-      <header className="payment-readiness-panel-header">
-        <div>
-          <span className="eyebrow">PAYMENT READINESS</span>
-          <h3>{state}</h3>
+      <details className="payment-readiness-details">
+        <summary>
+          <span className="payment-readiness-summary-title">
+            <small>PAYMENT READINESS</small>
+            <strong>{state}</strong>
+          </span>
+          <span className={`payment-readiness-state state-${state.toLowerCase().replace(/ /g, '-')}`}>
+            {paid ? '✓ 100%' : `${progress}%`}
+          </span>
+          <span className="payment-readiness-summary-action">
+            {paid
+              ? readiness.next_milestone_title
+                ? `✓ Next milestone unlocked · ${readiness.next_milestone_title}`
+                : '✓ Payment confirmed'
+              : role === 'client' ? readiness.client_next_action : readiness.provider_next_action}
+          </span>
+          <span className="payment-readiness-summary-toggle" aria-hidden="true">⌄</span>
+        </summary>
+        <div className="payment-readiness-details-content">
+          <ul className="payment-readiness-checklist">
+            <li className={readiness.scope_defined ? 'complete' : 'pending'}>
+              <span aria-hidden="true">{readiness.scope_defined ? '✓' : '○'}</span>
+              Agreement scope defined
+            </li>
+            <li className={milestone.amount_cents > 0 ? 'complete' : 'pending'}>
+              <span aria-hidden="true">{milestone.amount_cents > 0 ? '✓' : '○'}</span>
+              Milestone amount defined
+            </li>
+            <li className={milestone.acceptance_criteria.length > 0 ? 'complete' : 'pending'}>
+              <span aria-hidden="true">{milestone.acceptance_criteria.length > 0 ? '✓' : '○'}</span>
+              Acceptance criteria defined
+            </li>
+            <li className={milestone.evidence.length > 0 ? 'complete' : 'pending'}>
+              <span aria-hidden="true">{milestone.evidence.length > 0 ? '✓' : '○'}</span>
+              Evidence submitted
+            </li>
+            <li className={readiness.advisory_verdict !== 'unavailable' ? 'complete' : 'pending'}>
+              <span aria-hidden="true">{readiness.advisory_verdict !== 'unavailable' ? '✓' : '○'}</span>
+              <div>
+                AI advisory: {readiness.advisory_verdict}
+                {readiness.criteria_summary.total > 0
+                  ? ` · ${readiness.criteria_summary.unverified} unverified criteria`
+                  : ''}
+                {readiness.criteria_summary.unverified > 0 && (
+                  <ul className="payment-readiness-unverified">
+                    {readiness.criteria_summary.criteria
+                      .filter((criterion) => criterion.status !== 'verified')
+                      .map((criterion) => (
+                        <li key={criterion.criterion}>
+                          {criterion.criterion} ({criterion.status.replace('_', ' ')})
+                        </li>
+                      ))}
+                  </ul>
+                )}
+              </div>
+            </li>
+            <li className={readiness.approval_status === 'APPROVED' ? 'complete' : 'pending'}>
+              <span aria-hidden="true">{readiness.approval_status === 'APPROVED' ? '✓' : '○'}</span>
+              <span>Human approval · {approvalText}</span>
+            </li>
+            <li className={readiness.paypal_status !== 'NOT_CREATED' ? 'complete' : 'pending'}>
+              <span aria-hidden="true">{readiness.paypal_status !== 'NOT_CREATED' ? '✓' : '○'}</span>
+              Invoice status · {readiness.paypal_status}
+            </li>
+            <li className={readiness.webhook_payment_confirmed ? 'complete' : 'pending'}>
+              <span aria-hidden="true">{readiness.webhook_payment_confirmed ? '✓' : '○'}</span>
+              {webhookText}
+            </li>
+            <li className={nextMilestoneUnlocked ? 'complete' : 'pending'}>
+              <span aria-hidden="true">{nextMilestoneUnlocked ? '✓' : '○'}</span>
+              {readiness.next_milestone_title
+                ? nextMilestoneUnlocked
+                  ? `Next milestone: unlocked · ${readiness.next_milestone_title}`
+                  : `Next milestone · ${readiness.next_milestone_title} locked until this one is paid`
+                : 'No next milestone'}
+            </li>
+          </ul>
+          {!paid && (
+            <details className="payment-readiness-explanation">
+              <summary>Why is payment blocked?</summary>
+              <p>{whyBlocked(milestone, state)}</p>
+            </details>
+          )}
         </div>
-        <span className={`payment-readiness-state state-${state.toLowerCase().replace(/ /g, '-')}`}>
-          {state === 'PAID' ? 100 : readiness.score}% complete
-        </span>
-      </header>
-
-      <ul className="payment-readiness-checklist">
-        <li className={readiness.scope_defined ? 'complete' : 'pending'}>
-          <span aria-hidden="true">{readiness.scope_defined ? '✓' : '○'}</span>
-          Agreement scope defined
-        </li>
-        <li className={milestone.amount_cents > 0 ? 'complete' : 'pending'}>
-          <span aria-hidden="true">{milestone.amount_cents > 0 ? '✓' : '○'}</span>
-          Milestone amount defined
-        </li>
-        <li className={milestone.acceptance_criteria.length > 0 ? 'complete' : 'pending'}>
-          <span aria-hidden="true">{milestone.acceptance_criteria.length > 0 ? '✓' : '○'}</span>
-          Acceptance criteria defined
-        </li>
-        <li className={milestone.evidence.length > 0 ? 'complete' : 'pending'}>
-          <span aria-hidden="true">{milestone.evidence.length > 0 ? '✓' : '○'}</span>
-          Evidence submitted
-        </li>
-        <li className={readiness.advisory_verdict !== 'unavailable' ? 'complete' : 'pending'}>
-          <span aria-hidden="true">{readiness.advisory_verdict !== 'unavailable' ? '✓' : '○'}</span>
-          <div>
-            AI advisory: {readiness.advisory_verdict}
-            {readiness.criteria_summary.total > 0
-              ? ` · ${readiness.criteria_summary.unverified} unverified criteria`
-              : ''}
-            {readiness.criteria_summary.unverified > 0 && (
-              <ul className="payment-readiness-unverified">
-                {readiness.criteria_summary.criteria
-                  .filter((criterion) => criterion.status !== 'verified')
-                  .map((criterion) => (
-                    <li key={criterion.criterion}>
-                      {criterion.criterion} ({criterion.status.replace('_', ' ')})
-                    </li>
-                  ))}
-              </ul>
-            )}
-          </div>
-        </li>
-        <li className={readiness.approval_status === 'APPROVED' ? 'complete' : 'pending'}>
-          <span aria-hidden="true">{readiness.approval_status === 'APPROVED' ? '✓' : '○'}</span>
-          <span>Human approval · {approvalText}</span>
-        </li>
-        <li className={readiness.paypal_status !== 'NOT_CREATED' ? 'complete' : 'pending'}>
-          <span aria-hidden="true">{readiness.paypal_status !== 'NOT_CREATED' ? '✓' : '○'}</span>
-          Invoice status · {readiness.paypal_status}
-        </li>
-        <li className={readiness.webhook_payment_confirmed ? 'complete' : 'pending'}>
-          <span aria-hidden="true">{readiness.webhook_payment_confirmed ? '✓' : '○'}</span>
-          {webhookText}
-        </li>
-        <li className={nextMilestoneUnlocked ? 'complete' : 'pending'}>
-          <span aria-hidden="true">{nextMilestoneUnlocked ? '✓' : '○'}</span>
-          {readiness.next_milestone_title
-            ? nextMilestoneUnlocked
-              ? `Next milestone: unlocked · ${readiness.next_milestone_title}`
-              : `Next milestone · ${readiness.next_milestone_title} locked until this one is paid`
-            : 'No next milestone'}
-        </li>
-      </ul>
-
-      <p className="payment-readiness-next-action">
-        <strong>Next step for {role === 'client' ? 'you' : 'the provider'}:</strong>{' '}
-        {role === 'client' ? readiness.client_next_action : readiness.provider_next_action}
-      </p>
-
-      {state !== 'PAID' && (
-        <details className="payment-readiness-explanation">
-          <summary>Why is payment blocked?</summary>
-          <p>{whyBlocked(milestone, state)}</p>
-        </details>
-      )}
+      </details>
     </section>
   );
 }

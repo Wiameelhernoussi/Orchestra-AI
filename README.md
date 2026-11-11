@@ -26,8 +26,10 @@ URLs and private PNG/JPEG/WebP/PDF attachments. Link checks are bounded and
 SSRF-protected; they report limited observations such as reachability and page
 title (and public GitHub repository/root-file metadata), not proof of deliverable
 contents or criterion relevance. Uploaded files are available to agreement
-members for download, but this prototype does not inspect image or PDF contents.
-The AI labels its results advisory, and client approval remains required.
+members for download. PNG/JPEG attachments can receive optional visual analysis
+in real mode; mock mode uses a labeled canned response, and PDF contents are
+not analyzed. The AI labels its results advisory, and client approval remains
+required.
 
 ## Architecture
 
@@ -64,11 +66,24 @@ The AI labels its results advisory, and client approval remains required.
 | Approve work | — | — | Human decision | Records approval | — |
 | Create invoice | — | — | Requests | Creates after recorded client approval | — |
 | Authorize payment | — | — | Pays invoice | — | Processes payment |
+| Generate payment QR | — | — | Requests display | Restricts to invoice client | Generates code |
+| Send payment reminder | — | Requests reminder | — | Rate limits and audits | Sends reminder |
 | Confirm payment | — | — | — | Records verified status | Reports status / webhook |
 
 Invoice creation is server-side and requires a recorded client approval. The AI
 never approves work, creates invoices, or confirms payment. Payment state is
 updated from a verified PayPal webhook or a status read from PayPal.
+
+Each milestone's **PayPal Sandbox** panel shows the invoice timeline, payer
+link, webhook signature and processing proof, and duplicate deliveries ignored.
+Clients can request a PayPal-generated payment QR code for an unpaid sent
+invoice. Providers can request one payment reminder per invoice per 24 hours;
+the first request is sent through PayPal Sandbox and audited, and an action
+confirmation appears before a reminder can be sent. These actions are not
+simulated in mock mode.
+
+Both dashboards show database-backed invoiced, paid, and pending totals scoped
+to the current demo user's organization.
 
 ## Quick setup: mock mode
 
@@ -105,6 +120,19 @@ first tab, choose **Demo tools → Open the provider role in a new tab**, then
 work through the same shared agreement from each role. The account menu signs
 out of the current tab's demo role and asks for confirmation. The Mock-mode
 banner remains visible whenever simulated payments are active.
+
+### Neutral demo assets
+
+These original, unbranded e-commerce mockups are in [`demo-assets/`](demo-assets/).
+Upload them from the provider's evidence form when demonstrating the **Design**
+milestone; they are not preattached to the seed.
+
+| Asset | Suggested evidence step |
+|---|---|
+| ![Home page mockup](demo-assets/home-page.png) | Attach `home-page.png` for the storefront/homepage visual criterion. |
+| ![Catalog page mockup](demo-assets/catalog-page.png) | Attach `catalog-page.png` for the product listing and catalog criterion. |
+| ![Product page mockup](demo-assets/product-page.png) | Attach `product-page.png` for the product detail and purchase-action criterion. |
+| ![Style guide board](demo-assets/style-guide.png) | Attach `style-guide.png` for the palette and typography criterion. |
 
 To stop the app, press `Ctrl+C` or run `docker compose down`. The database
 volume is retained unless explicitly removed.
@@ -155,7 +183,8 @@ verified webhook events or the explicit PayPal invoice-sync fallback.
    request, analyze it, check missing information and proposed milestone
    criteria, then propose the agreement.
 2. Switch to **Provider**, accept the proposal, start **Design**, submit a
-   description and any evidence links, then submit it for review. The seeded
+   description and any evidence links, and attach the matching neutral images
+   listed above. Submit it for review. The seeded
    Design milestone includes visual file criteria and a public HTTPS preview
    reachability criterion; link checks confirm reachability only, not visual
    quality or criterion compliance.
