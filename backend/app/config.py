@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     GROQ_MAX_RETRIES: int = 2
     GROQ_MAX_RETRY_WAIT_SECONDS: int = 60
     DEMO_MODE: Literal["mock", "real"] = "real"
+    PAYWALL_ASSISTANT_ENABLED: bool = False
     DEMO_CLIENT_PAYPAL_EMAIL: str = ""
     DEMO_SEED_TOKEN: str = ""
     PAYPAL_CLIENT_ID: str = ""

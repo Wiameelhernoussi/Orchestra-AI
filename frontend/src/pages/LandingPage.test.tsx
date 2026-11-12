@@ -31,6 +31,7 @@ describe('LandingPage', () => {
     expect(screen.getByText('People decide')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /I'm a client/ })).toHaveAttribute('href', '/client');
     expect(screen.getByRole('link', { name: /I'm a provider/ })).toHaveAttribute('href', '/provider');
+    expect(screen.queryByText(/paywall/i)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText('View full matrix'));
     expect(screen.getByRole('table', { name: /permission matrix/i })).toBeInTheDocument();

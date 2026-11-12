@@ -146,6 +146,41 @@ def test_invoice_qr_and_reminder_use_documented_sandbox_endpoints(
     assert captured["payload"] == expected_payload
 
 
+def test_paywall_order_create_and_capture_use_stable_request_ids():
+    captured = []
+
+    def handler(request):
+        if request.url.path == "/v1/oauth2/token":
+            return httpx.Response(200, json={"access_token": "sandbox-token", "expires_in": 300})
+        captured.append(request)
+        if request.url.path == "/v2/checkout/orders":
+            return httpx.Response(201, json={"id": "ORDER-1", "status": "CREATED"})
+        return httpx.Response(201, json={"id": "ORDER-1", "status": "COMPLETED"})
+
+    http = httpx.Client(
+        base_url="https://api-m.sandbox.paypal.com",
+        transport=httpx.MockTransport(handler),
+    )
+    paypal = PaypalClient(_settings(), http)
+    try:
+        created = paypal.create_order({"intent": "CAPTURE"}, "create-stable-id")
+        captured_order = paypal.capture_order("ORDER-1", "capture-stable-id")
+        loaded = paypal.get_order("ORDER-1")
+    finally:
+        http.close()
+
+    assert created["id"] == "ORDER-1"
+    assert captured_order["status"] == "COMPLETED"
+    assert loaded["id"] == "ORDER-1"
+    assert [request.url.path for request in captured] == [
+        "/v2/checkout/orders",
+        "/v2/checkout/orders/ORDER-1/capture",
+        "/v2/checkout/orders/ORDER-1",
+    ]
+    assert captured[0].headers["paypal-request-id"] == "create-stable-id"
+    assert captured[1].headers["paypal-request-id"] == "capture-stable-id"
+
+
 def test_live_paypal_endpoint_is_rejected():
     with pytest.raises(PaypalConfigurationError, match="Sandbox"):
         PaypalClient(_settings(PAYPAL_BASE_URL="https://api-m.paypal.com"))

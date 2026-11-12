@@ -3,6 +3,8 @@ import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { useRole } from '../../context/RoleContext';
 
+const paywallAssistantEnabled = import.meta.env.VITE_ENABLE_PAYWALL_ASSISTANT === 'true';
+
 function Layout() {
   const { role, user, setRole, demoMode, demoModeError } = useRole();
   const navigate = useNavigate();
@@ -44,7 +46,10 @@ function Layout() {
     ? [
         { to: '/client', label: 'Agreements', end: true },
         { to: '/client/new', label: 'New agreement', end: true },
-      ]
+      ...(paywallAssistantEnabled
+        ? [{ to: '/client/paywall', label: 'Paywall assistant', end: true }]
+        : []),
+    ]
     : [{ to: '/provider', label: 'My work', end: true }];
 
   return (

@@ -85,6 +85,10 @@ simulated in mock mode.
 Both dashboards show database-backed invoiced, paid, and pending totals scoped
 to the current demo user's organization.
 
+## Roadmap
+
+The paywall module is experimental and disabled by default.
+
 ## Quick setup: mock mode
 
 Requirements: Docker Desktop with Docker Compose. No Groq or PayPal credentials

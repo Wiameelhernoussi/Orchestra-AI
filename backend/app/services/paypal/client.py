@@ -34,6 +34,10 @@ def _operation_name(method: str, path: str) -> str:
         return "generate_invoice_qr_code"
     if path.endswith("/remind"):
         return "send_invoice_reminder"
+    if path == "/v2/checkout/orders":
+        return "create_paywall_order"
+    if path.startswith("/v2/checkout/orders/") and path.endswith("/capture"):
+        return "capture_paywall_order"
     if path == "/v1/notifications/verify-webhook-signature":
         return "verify_webhook"
     return "other"
@@ -170,6 +174,27 @@ class PaypalClient:
             f"/v2/invoicing/invoices/{invoice_id}/remind",
             json={},
         )
+
+    def create_order(self, payload: dict[str, Any], request_id: str) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/v2/checkout/orders",
+            json=payload,
+            request_id=request_id,
+            extra_headers={"Prefer": "return=representation"},
+        )
+
+    def capture_order(self, order_id: str, request_id: str) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/v2/checkout/orders/{order_id}/capture",
+            json={},
+            request_id=request_id,
+            extra_headers={"Prefer": "return=representation"},
+        )
+
+    def get_order(self, order_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/v2/checkout/orders/{order_id}")
 
     def verify_webhook(self, headers: dict[str, str], event: dict[str, Any]) -> bool:
         if not self._settings.PAYPAL_WEBHOOK_ID:

@@ -4,6 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.v1.payments import router as payments_router
+from app.api.v1.paywall import router as paywall_router
 from app.api.v1.webhooks import router as webhooks_router
 from app.api.v1.workflow import client_router, provider_router, router as workflow_router
 from app.database import engine
@@ -24,6 +25,7 @@ app.add_middleware(
 )
 
 app.include_router(payments_router, prefix="/api/v1")
+app.include_router(paywall_router, prefix="/api/v1")
 app.include_router(webhooks_router, prefix="/api/v1")
 app.include_router(client_router, prefix="/api/v1")
 app.include_router(provider_router, prefix="/api/v1")

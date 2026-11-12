@@ -9,6 +9,9 @@ import ClientAgreementDetail from './pages/client/ClientAgreementDetail';
 import ProviderDashboard from './pages/provider/ProviderDashboard';
 import ProviderAgreementDetail from './pages/provider/ProviderAgreementDetail';
 import LandingPage from './pages/LandingPage';
+import ClientPaywallAssistant from './pages/client/ClientPaywallAssistant';
+
+const paywallAssistantEnabled = import.meta.env.VITE_ENABLE_PAYWALL_ASSISTANT === 'true';
 
 function RoleGuard({ role, children }: { role: Role; children: ReactNode }) {
   const { role: activeRole, setRole } = useRole();
@@ -37,6 +40,12 @@ function App() {
           {/* Client Routes */}
           <Route path="/client" element={<ClientDashboard />} />
           <Route path="/client/new" element={<NewAgreementWizard />} />
+          <Route
+            path="/client/paywall"
+            element={paywallAssistantEnabled
+              ? <ClientPaywallAssistant />
+              : <Navigate to="/client" replace />}
+          />
           <Route path="/client/agreements/:id" element={<ClientAgreementDetail />} />
         </Route>
         <Route element={<RoleGuard role="provider"><Layout /></RoleGuard>}>

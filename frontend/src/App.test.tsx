@@ -61,6 +61,16 @@ describe('workspace route guards', () => {
     expect(screen.queryByText('PROVIDER WORKSPACE')).not.toBeInTheDocument();
   });
 
+  it('hides the disabled paywall link and redirects its route to the client dashboard', async () => {
+    vi.spyOn(api, 'health').mockResolvedValue({ demo_mode: 'real' });
+    window.sessionStorage.setItem('orchestra.demo.role', 'client');
+    render(<MemoryRouter initialEntries={['/client/paywall']}><App /></MemoryRouter>);
+
+    expect(await screen.findByText('CLIENT WORKSPACE')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Paywall assistant' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Pay only for what you choose.' })).not.toBeInTheDocument();
+  });
+
   it('returns an already selected role to its workspace instead of allowing an in-place role change', async () => {
     vi.spyOn(api, 'health').mockResolvedValue({ demo_mode: 'real' });
     window.sessionStorage.setItem('orchestra.demo.role', 'client');

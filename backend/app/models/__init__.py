@@ -7,3 +7,4 @@ from app.models.approval import Approval
 from app.models.invoice import Invoice
 from app.models.webhook import WebhookEvent
 from app.models.audit import AuditLog
+from app.models.paywall_purchase import PaywallPurchase

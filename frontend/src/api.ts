@@ -118,6 +118,34 @@ export interface PaymentTotals {
   pending_cents: number;
 }
 
+export interface PaywallOffer {
+  id: string;
+  title: string;
+  topic: string;
+  price_cents: number;
+  currency: string;
+  preview: string;
+  reason: string;
+}
+
+export interface PaywallRecommendations {
+  recommendations: PaywallOffer[];
+  assistant_mode: 'groq_ai' | 'mock_rules' | 'rules_fallback' | 'preference_match';
+  explanation: string;
+}
+
+export interface PaywallCheckout {
+  purchase_id: string;
+  status: 'PENDING' | 'APPROVED' | 'CAPTURED';
+  approval_url: string | null;
+  amount_cents?: number;
+  currency?: string;
+  offer_id?: string;
+  title?: string;
+  content?: string;
+  captured_at?: string | null;
+}
+
 export interface PaymentReadinessCheck {
   key: string;
   label: string;
@@ -304,6 +332,37 @@ export const api = {
     request<Agreement[]>(`/api/v1/${role}/agreements`, userId),
   paymentTotals: (userId: string) =>
     request<PaymentTotals>('/api/v1/payments/summary', userId),
+  paywallRecommendations: (
+    userId: string,
+    topics: string[],
+    maxBudgetCents: number,
+  ) =>
+    request<PaywallRecommendations>(
+      '/api/v1/paywall/recommendations',
+      userId,
+      json('POST', { topics, max_budget_cents: maxBudgetCents }),
+    ),
+  createPaywallPurchase: (
+    userId: string,
+    offerId: string,
+    maxBudgetCents: number,
+    userConfirmedPurchase: boolean,
+  ) =>
+    request<PaywallCheckout>(
+      '/api/v1/paywall/purchases',
+      userId,
+      json('POST', {
+        offer_id: offerId,
+        max_budget_cents: maxBudgetCents,
+        user_confirmed_purchase: userConfirmedPurchase,
+      }),
+    ),
+  capturePaywallPurchase: (userId: string, purchaseId: string) =>
+    request<PaywallCheckout>(
+      `/api/v1/paywall/purchases/${encodeURIComponent(purchaseId)}/capture`,
+      userId,
+      json('POST'),
+    ),
   getAgreement: (role: Role, id: string, userId: string) =>
     request<Agreement>(`/api/v1/${role}/agreements/${id}`, userId),
   paymentReadiness: (userId: string, milestoneId: string) =>

@@ -32,6 +32,7 @@ from app.models import (
     Invoice,
     Milestone,
     Organization,
+    PaywallPurchase,
     User,
     WebhookEvent,
 )
@@ -1322,6 +1323,13 @@ def seed_demo(
     db.query(AuditLog).filter(AuditLog.agreement_id.in_(demo_agreement_ids)).delete(
         synchronize_session=False
     )
+    db.query(PaywallPurchase).filter(
+        PaywallPurchase.user_id.in_(
+            db.query(User.id).filter(
+                User.organization_id.in_(["demo-client-org", "demo-provider-org"])
+            )
+        )
+    ).delete(synchronize_session=False)
     db.query(Invoice).filter(Invoice.milestone_id.in_(demo_milestone_ids)).delete(
         synchronize_session=False
     )
